@@ -1,0 +1,17 @@
+node_modules/
+venv/
+.env
+__pycache__/
+*.pyc
+*.pth
+*.pt
+**/data/raw/
+**/data/processed/
+ml/data/
+ml/models/
+backend/venv/
+**/models/
+dist/
+build/
+.vscode/
+*.db

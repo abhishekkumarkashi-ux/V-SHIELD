@@ -1,0 +1,21 @@
+{
+  "name": "v-shield",
+  "version": "1.0.0",
+  "description": "V-SHIELD is an AI-powered real-time voice security platform designed to analyze live voice communication and detect potentially AI-generated, cloned, spoofed, or manipulated voices.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "frontend": "cd frontend && npm run dev",
+    "backend": "cd backend && .\\venv\\Scripts\\uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "start": "concurrently -k \"npm run backend\" \"npm run frontend\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

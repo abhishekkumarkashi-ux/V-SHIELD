@@ -1,0 +1,43 @@
+# ML Configuration
+dataset:
+  kaggle_id: "awsaf49/asvpoof-2019-dataset"
+  name: "ASVspoof 2019"
+  raw_dir: "ml/data/raw"
+  processed_dir: "ml/data/processed"
+  metadata_dir: "ml/data/metadata"
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  duration_sec: 4.0
+
+features:
+  n_fft: 512
+  hop_length: 160
+  n_mels: 80
+
+training:
+  scenario: "LA"
+  balanced_subset: true
+  train_bonafide: 5000
+  train_spoof: 5000
+  val_bonafide: 1000
+  val_spoof: 1000
+  batch_size: 16
+  epochs: 15
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  early_stopping_patience: 4
+  num_workers: 0
+
+hardware:
+  device: "cuda"
+
+risk:
+  low_max: 29
+  medium_max: 59
+  high_max: 79
+  critical_min: 80
+  smoothing:
+    enabled: true
+    alpha: 0.3

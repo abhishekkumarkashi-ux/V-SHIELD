@@ -1,0 +1,6 @@
+Accuracy: 0.92
+Precision: 0.92
+Recall: 1.0
+F1: 0.9583333333333334
+ROC_AUC: 0.5
+EER: 0.0

@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+python-dotenv
+sqlalchemy
+psycopg2-binary
+pydantic
+torch
+torchaudio
+librosa
+numpy
+pandas
+scikit-learn
+websockets
+speechbrain
+pyjwt
+google-auth
+passlib[bcrypt]

@@ -1,0 +1,85 @@
+Bandpass_Filter:
+  acc: 0.4791666666666667
+  auc: 0.4865217391304348
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - &id001 !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    uB6F61G43j8=
+  f1: 0.647887323943662
+Baseline:
+  acc: 0.5833333333333334
+  auc: 0.4044642857142857
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    ZmZmZmZm4j8=
+  f1: 0.7368421052631579
+MuLaw_Compression:
+  acc: 0.5625
+  auc: 0.45326278659611996
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    YhiGYRiG4T8=
+  f1: 0.72
+Noise_0dB:
+  acc: 0.46875
+  auc: 0.5764705882352941
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    nJubm5ub2z8=
+  f1: 0.6382978723404256
+Noise_10dB:
+  acc: 0.5104166666666666
+  auc: 0.5345201910551454
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    eDbqOxv13T8=
+  f1: 0.6758620689655173
+Noise_20dB:
+  acc: 0.5
+  auc: 0.5421006944444444
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAA4D8=
+  f1: 0.6666666666666666
+Resample_8kHz:
+  acc: 0.4166666666666667
+  auc: 0.5785714285714285
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    t23btm3b3j8=
+  f1: 0.5882352941176471
+Vol_minus_6dB:
+  acc: 0.5208333333333334
+  auc: 0.5591304347826087
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAA4D8=
+  f1: 0.684931506849315
+Vol_plus_6dB:
+  acc: 0.4791666666666667
+  auc: 0.5017391304347827
+  eer: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAA4D8=
+  f1: 0.647887323943662
