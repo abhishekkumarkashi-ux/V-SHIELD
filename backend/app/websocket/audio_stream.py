@@ -7,10 +7,8 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.audio.protocol import AUDIO_PROTOCOL
-from app.ml.model import model_instance
-from app.ml.vad import EnergyVAD
+from ml.pipeline.multimodel_engine import multimodel_instance
 from app.api.speaker_store import get_speaker_embedding
-from app.ml.speaker_verification import speaker_verification_instance
 
 # Robust import for ImpersonationEngine
 try:
@@ -49,9 +47,9 @@ async def websocket_analyze_endpoint(websocket: WebSocket):
     await websocket.send_json({
         "type": "status",
         "status": "connected",
-        "model_status": getattr(model_instance, "model_status", "UNTRAINED"),
-        "production_ready": getattr(model_instance, "production_ready", False),
-        "model_disclaimer": getattr(model_instance, "model_disclaimer", "Anti-spoofing model is not validated for production use."),
+        "model_status": multimodel_instance.get_status(),
+        "production_ready": False,
+        "model_disclaimer": "Anti-spoofing model is not validated for production use.",
         "protocol": {
             "sample_rate": AUDIO_PROTOCOL["SAMPLE_RATE"],
             "window_size_samples": AUDIO_PROTOCOL["WINDOW_SIZE_SAMPLES"],
@@ -159,8 +157,8 @@ async def websocket_analyze_endpoint(websocket: WebSocket):
                             "status": "analyzing",
                             "speaker_enrolled": enrolled_embedding is not None,
                             "speaker_status": session_speaker_status,
-                            "model_status": getattr(model_instance, "model_status", "UNTRAINED"),
-                            "production_ready": getattr(model_instance, "production_ready", False)
+                            "model_status": multimodel_instance.get_status(),
+                            "production_ready": False
                         })
 
                     elif msg_type == "stop":
@@ -302,29 +300,24 @@ async def websocket_analyze_endpoint(websocket: WebSocket):
 
                 # Run inference
                 inf_start = time.time()
-                result = model_instance.predict_pcm(inference_chunk)
-                inference_ms = int((time.time() - inf_start) * 1000)
+                result = multimodel_instance.analyze(inference_chunk, enrolled_embedding)
+                inference_ms = result.get("latency", {}).get("total_ms", int((time.time() - inf_start) * 1000))
 
                 if "error" in result:
                     await websocket.send_json({
                         "type": "analysis",
                         "status": "error",
-                        "error": "Model checkpoint missing, inference disabled." if result.get("error") == "Model not loaded" else "Internal inference error"
+                        "error": result["error"]
                     })
                     continue
 
-                # Speaker Verification
-                speaker_similarity = None
-                if enrolled_embedding is not None:
-                    chunk_emb_res = speaker_verification_instance.extract_embedding(inference_chunk)
-                    if "embedding" in chunk_emb_res:
-                        speaker_similarity = speaker_verification_instance.compute_similarity(
-                            enrolled_embedding, chunk_emb_res["embedding"]
-                        )
-
                 # Stateful Risk Engine
+                speaker_similarity = result.get("ecapa", {}).get("speaker_similarity", None)
+                spoof_prob = result.get("fusion", {}).get("spoof_probability", 
+                                result.get("aasist", {}).get("spoof_probability", 0.5))
+                                
                 risk_payload = risk_engine.process_window(
-                    spoof_probability=result["spoof_probability"],
+                    spoof_probability=spoof_prob,
                     speaker_similarity=speaker_similarity,
                     speaker_enrolled=(enrolled_embedding is not None)
                 )
@@ -332,7 +325,7 @@ async def websocket_analyze_endpoint(websocket: WebSocket):
                 # Update session metrics
                 if session_active:
                     session_max_risk = max(session_max_risk, risk_payload["impersonation_risk_score"])
-                    session_max_spoof = max(session_max_spoof, float(result["spoof_probability"]))
+                    session_max_spoof = max(session_max_spoof, float(spoof_prob))
                     if speaker_similarity is not None:
                         session_min_similarity = min(session_min_similarity, speaker_similarity)
                         if speaker_similarity < 0.25:
@@ -353,8 +346,8 @@ async def websocket_analyze_endpoint(websocket: WebSocket):
                     "rms": float(rms),
                     "inference_ms": inference_ms,
                     "total_latency_ms": latency_ms,
-                    "spoof_probability": float(result["spoof_probability"]),
-                    "model_status": getattr(model_instance, "model_status", "UNTRAINED"),
+                    "spoof_probability": float(spoof_prob),
+                    "model_status": multimodel_instance.get_status(),
                     "impersonation_risk_score": risk_payload["impersonation_risk_score"],
                     "impersonation_risk_level": risk_payload["impersonation_risk_level"]
                 }))
@@ -369,10 +362,10 @@ async def websocket_analyze_endpoint(websocket: WebSocket):
                     "rms": float(rms),
                     "latency_ms": latency_ms,
                     "inference_ms": inference_ms,
-                    "spoof_probability": float(result["spoof_probability"]),
-                    "model_status": getattr(model_instance, "model_status", "UNTRAINED"),
-                    "production_ready": getattr(model_instance, "production_ready", False),
-                    "model_disclaimer": getattr(model_instance, "model_disclaimer", "Anti-spoofing model is not validated for production use."),
+                    "spoof_probability": float(spoof_prob),
+                    "model_status": multimodel_instance.get_status(),
+                    "production_ready": False,
+                    "model_disclaimer": "Anti-spoofing model is not validated for production use.",
                     "speaker_similarity": speaker_similarity,
                     "speaker_status": session_speaker_status,
                     "impersonation_risk_score": risk_payload["impersonation_risk_score"],

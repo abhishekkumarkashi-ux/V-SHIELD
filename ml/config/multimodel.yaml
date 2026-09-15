@@ -1,0 +1,28 @@
+models:
+  aasist:
+    enabled: true
+    checkpoint: "models/vshield_aasist/best_model.pt"
+    device: "auto"
+
+  wavlm:
+    enabled: true
+    model_name: "microsoft/wavlm-base-plus"
+    device: "auto"
+    freeze: true
+
+  ecapa:
+    enabled: true
+    source: "speechbrain/spkrec-ecapa-voxceleb"
+    device: "auto"
+
+  fusion:
+    enabled: true
+    checkpoint: "models/vshield_fusion/best_model.pt"
+    input_dim: 1122
+    hidden_dim: 512
+    dropout: 0.3
+
+runtime:
+  sample_rate: 16000
+  window_samples: 64000
+  hop_samples: 16000

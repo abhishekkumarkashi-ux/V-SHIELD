@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from features import FeatureExtractor
+from ml.src.features import FeatureExtractor
 
 class LightweightAntiSpoofCNN(nn.Module):
     def __init__(self, config=None):

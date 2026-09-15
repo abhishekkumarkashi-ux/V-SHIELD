@@ -11,7 +11,7 @@ ml_src_dir = os.path.join(base_dir, 'ml', 'src')
 sys.path.append(ml_src_dir)
 
 try:
-    from model import LightweightAntiSpoofCNN
+    from ml.models.baseline.lightweight_cnn import LightweightAntiSpoofCNN
     from risk_score import calculate_risk_score
 except ImportError as e:
     print(f"WARNING: Could not import ml modules. Ensure PYTHONPATH is correct. Error: {e}")

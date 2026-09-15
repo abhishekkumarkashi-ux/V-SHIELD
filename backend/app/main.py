@@ -38,19 +38,13 @@ app.add_middleware(
 )
 
 # Include routers
-from app.ml.model import model_instance
-from app.ml.speaker_verification import speaker_verification_instance
+from ml.pipeline.multimodel_engine import multimodel_instance
 import os
 
 @app.on_event("startup")
 async def startup_event():
-    # Load model exactly once at startup
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    model_path = os.path.join(base_dir, 'models', 'vshield_antispoof_v1', 'best_model.pt')
-    model_instance.load_model(model_path)
-    
-    # Load Speaker Verification Model
-    speaker_verification_instance.load_model()
+    # Load Multi-Model Engine
+    multimodel_instance.load_models()
     
     # Create development user if not exists
     from app.database.database import SessionLocal
@@ -91,19 +85,22 @@ async def root():
 @app.get("/health")
 async def health():
     status = "ok"
-    if not model_instance.is_loaded:
+    if not multimodel_instance.is_loaded:
         status = "degraded"
+        
+    ms = multimodel_instance.get_status()
     
     return {
         "status": status,
-        "model_loaded": model_instance.is_loaded,
-        "model_status": getattr(model_instance, "model_status", "UNKNOWN"),
-        "production_ready": getattr(model_instance, "production_ready", False),
-        "validation_status": getattr(model_instance, "validation_status", "NOT_VALIDATED"),
-        "model_disclaimer": getattr(model_instance, "model_disclaimer", "Anti-spoofing model is not validated for production use."),
-        "model_error": "checkpoint not found or failed to load" if not model_instance.is_loaded else None,
-        "speaker_model_loaded": getattr(speaker_verification_instance, "is_loaded", True),
-        "device": str(model_instance.device),
-        "websocket": "available"
+        "model_loaded": multimodel_instance.is_loaded,
+        "model_status": ms.get("fusion", "UNKNOWN"),
+        "production_ready": False,
+        "validation_status": "NOT_VALIDATED",
+        "model_disclaimer": "Anti-spoofing model is not validated for production use.",
+        "model_error": "checkpoint not found or failed to load" if not multimodel_instance.is_loaded else None,
+        "speaker_model_loaded": multimodel_instance.ecapa_loader.is_loaded,
+        "device": str(multimodel_instance.device),
+        "websocket": "available",
+        "stack": ms
     }
 
