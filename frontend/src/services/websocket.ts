@@ -7,7 +7,8 @@ class WebSocketService {
   private onStatusCallback: MessageCallback | null = null;
 
   constructor() {
-    this.url = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000/ws/analyze';
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    this.url = import.meta.env.VITE_WS_URL || `${protocol}//${window.location.host}/ws/analyze`;
   }
 
   private speakerId: string | null = null;

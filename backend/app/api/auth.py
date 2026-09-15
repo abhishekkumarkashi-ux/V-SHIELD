@@ -6,15 +6,35 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests
+import bcrypt
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except ValueError:
+        return False
 
 from app.database.database import get_db
 from app.database.models import User
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-key-change-in-prod")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+SECRET_KEY = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY")
+
+if ENVIRONMENT == "production" and not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET environment variable is mandatory in production")
+
+if not SECRET_KEY:
+    SECRET_KEY = "vshield-development-secret-key-32-bytes-long!"
+
+IS_SECURE_COOKIE = (ENVIRONMENT == "production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "dummy-client-id")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 router = APIRouter(prefix="/api/v1/auth")
 
@@ -23,9 +43,13 @@ from pydantic import BaseModel
 class GoogleAuthRequest(BaseModel):
     credential: str
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 class UserResponse(BaseModel):
     id: int
-    google_id: str
+    google_id: Optional[str] = None
     email: str
     name: Optional[str] = None
     picture: Optional[str] = None
@@ -57,11 +81,6 @@ def get_current_user_from_token(token: str, db: Session):
 
 async def get_current_user(request: Request, db: Session = Depends(get_db)):
     token = request.cookies.get("vshield_session")
-    if not token:
-        # Fallback to Authorization header if provided
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
             
     if not token:
         raise HTTPException(
@@ -77,26 +96,51 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
         )
     return user
 
+@router.post("/login")
+async def login(login_req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == login_req.email).first()
+    if not user or not user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    if not verify_password(login_req.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+        
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": str(user.id)}, expires_delta=access_token_expires
+    )
+    
+    response.set_cookie(
+        key="vshield_session",
+        value=access_token,
+        httponly=True,
+        secure=IS_SECURE_COOKIE,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    
+    return {
+        "status": "success", 
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": UserResponse.model_validate(user)
+    }
+
 @router.post("/google")
 async def google_auth(auth_req: GoogleAuthRequest, response: Response, db: Session = Depends(get_db)):
     try:
-        # Note: In production you MUST provide a valid GOOGLE_CLIENT_ID 
-        # that matches the one used by the frontend.
-        # If GOOGLE_CLIENT_ID is dummy, we will allow it to pass for development/testing if the token is somehow bypassed, 
-        # but google library requires it to match.
+        if not GOOGLE_CLIENT_ID:
+            raise HTTPException(status_code=400, detail="Google authentication is not configured on the server")
+            
         try:
             idinfo = id_token.verify_oauth2_token(auth_req.credential, requests.Request(), GOOGLE_CLIENT_ID)
         except ValueError as e:
-            # Fallback for dev if bypassing with mock token
-            if auth_req.credential == "mock_dev_token":
-                idinfo = {
-                    "email": "dev@vshield.app",
-                    "sub": "mock_google_id_123",
-                    "name": "Developer User",
-                    "picture": "https://ui-avatars.com/api/?name=Dev+User"
-                }
-            else:
-                raise e
+            raise HTTPException(status_code=400, detail=f"Invalid Google token: {e}")
         
         email = idinfo.get('email')
         google_id = idinfo.get('sub')
@@ -140,19 +184,18 @@ async def google_auth(auth_req: GoogleAuthRequest, response: Response, db: Sessi
             key="vshield_session",
             value=access_token,
             httponly=True,
-            secure=False, # Set to True in production with HTTPS
+            secure=IS_SECURE_COOKIE,
             samesite="lax",
             max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
         
         return {
             "status": "success", 
-            "user": UserResponse.from_orm(user),
-            "token": access_token
+            "user": UserResponse.from_orm(user)
         }
         
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid token: {e}")
+        raise HTTPException(status_code=400, detail=f"Authentication error: {e}")
 
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
@@ -160,5 +203,10 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie("vshield_session")
+    response.delete_cookie(
+        key="vshield_session",
+        httponly=True,
+        secure=IS_SECURE_COOKIE,
+        samesite="lax"
+    )
     return {"status": "success"}

@@ -27,4 +27,4 @@ class EnergyVAD:
         # Calculate Root Mean Square energy
         rms = np.sqrt(np.mean(np.square(chunk_centered)))
         
-        return bool(rms > self.energy_threshold)
+        return bool(rms > self.energy_threshold), float(rms)

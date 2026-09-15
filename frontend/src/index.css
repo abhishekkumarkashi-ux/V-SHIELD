@@ -1,7 +1,51 @@
 @import "tailwindcss";
 
+@theme {
+  --color-background: #080d16;
+  --color-on-background: #f8fafc;
+  --color-surface: #080d16;
+  --color-on-surface: #f8fafc;
+  --color-surface-container-lowest: #0a0f18;
+  --color-surface-container-low: #101722;
+  --color-surface-container: #171d29;
+  --color-surface-container-high: #1e2532;
+  --color-surface-container-highest: #2a3140;
+  --color-outline: #64748b;
+  --color-outline-variant: #1e293b;
+  
+  --color-primary: #00c8e8;
+  --color-on-primary: #003640;
+  --color-primary-container: #00a0ba;
+  --color-primary-fixed-dim: #28d7f5;
+  
+  --color-secondary: #94a3b8;
+  --color-on-secondary: #0f172a;
+  
+  --color-tertiary: #45e0a0;
+  --color-on-tertiary: #003824;
+  
+  --color-error: #ffaaa0;
+  --color-on-error: #690005;
+
+  --spacing-space-xs: 0.25rem;
+  --spacing-space-sm: 0.5rem;
+  --spacing-space-md: 0.75rem;
+  --spacing-space-lg: 1rem;
+  --spacing-space-xl: 1.5rem;
+  --spacing-gutter-desktop: 1.25rem;
+
+  --font-headline-xl: 'Inter', sans-serif;
+  --font-headline-md: 'Inter', sans-serif;
+  --font-headline-sm: 'Inter', sans-serif;
+  --font-body-md: 'Inter', sans-serif;
+  --font-body-sm: 'Inter', sans-serif;
+  --font-label-md: 'JetBrains Mono', monospace;
+  --font-label-sm: 'JetBrains Mono', monospace;
+  --font-code-md: 'JetBrains Mono', monospace;
+}
+
 @layer base {
   body {
-    @apply bg-slate-950 text-slate-50 antialiased;
+    @apply bg-background text-on-background font-body-md antialiased;
   }
 }

@@ -56,15 +56,30 @@ class SpeakerVerificationModel:
         Returns a float between -1.0 and 1.0.
         """
         try:
-            # Using torch cosine similarity
-            if isinstance(emb1, dict) or isinstance(emb2, dict):
-                return -1.0 # Error state
-                
-            # Squeeze to 1D or 2D and compute
-            sim = torch.nn.functional.cosine_similarity(
-                emb1.squeeze(1), emb2.squeeze(1), dim=-1
-            )
-            return sim.item()
+            if isinstance(emb1, dict) or isinstance(emb2, dict) or emb1 is None or emb2 is None:
+                return -1.0
+
+            import numpy as np
+            if isinstance(emb1, np.ndarray):
+                emb1 = torch.from_numpy(emb1)
+            elif not isinstance(emb1, torch.Tensor):
+                emb1 = torch.tensor(emb1)
+
+            if isinstance(emb2, np.ndarray):
+                emb2 = torch.from_numpy(emb2)
+            elif not isinstance(emb2, torch.Tensor):
+                emb2 = torch.tensor(emb2)
+
+            emb1 = emb1.to(device=self.device, dtype=torch.float32)
+            emb2 = emb2.to(device=self.device, dtype=torch.float32)
+
+            if emb1.dim() > 2:
+                emb1 = emb1.squeeze(1)
+            if emb2.dim() > 2:
+                emb2 = emb2.squeeze(1)
+
+            sim = torch.nn.functional.cosine_similarity(emb1, emb2, dim=-1)
+            return float(sim.mean().item())
         except Exception as e:
             traceback.print_exc()
             return -1.0

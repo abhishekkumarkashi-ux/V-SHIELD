@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Foreig
 from sqlalchemy.orm import relationship
 from app.database.database import Base
 from datetime import datetime
+import uuid
 
 class User(Base):
     __tablename__ = "users"
@@ -34,6 +35,13 @@ class AnalysisHistory(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     timestamp = Column(DateTime, default=datetime.utcnow)
     
+    # New metadata fields
+    call_id = Column(String, index=True, default=lambda: f"#VSH-{uuid.uuid4().hex[:4].upper()}")
+    caller_ani = Column(String, nullable=True)
+    caller_origin = Column(String, nullable=True)
+    target_desk = Column(String, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    
     risk_score = Column(Float)
     risk_level = Column(String)
     spoof_probability = Column(Float)
@@ -41,3 +49,25 @@ class AnalysisHistory(Base):
     speaker_status = Column(String)
     
     user = relationship("User", back_populates="history")
+    alert = relationship("SecurityAlert", back_populates="analysis", uselist=False)
+
+class SecurityAlert(Base):
+    __tablename__ = "security_alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    incident_id = Column(String, index=True, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    analysis_id = Column(Integer, ForeignKey("analysis_history.id"), nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    severity = Column(String) # CRITICAL, HIGH, MEDIUM, LOW
+    title = Column(String)
+    caller = Column(String, nullable=True)
+    target = Column(String, nullable=True)
+    claimed_identity = Column(String, nullable=True)
+    risk_score = Column(Integer)
+    is_resolved = Column(Boolean, default=False)
+    assignee = Column(String, nullable=True)
+    
+    user = relationship("User")
+    analysis = relationship("AnalysisHistory", back_populates="alert")

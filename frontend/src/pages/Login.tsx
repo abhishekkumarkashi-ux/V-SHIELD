@@ -8,6 +8,8 @@ const Login = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleGoogleSuccess = async (credentialResponse: any) => {
     try {
@@ -22,16 +24,31 @@ const Login = () => {
     }
   };
 
-  const handleMockLogin = async (e: React.FormEvent) => {
+  const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email || !password) {
+      setError('Please enter both email and password.');
+      return;
+    }
     setLoading(true);
     try {
-      // In a real app this would be a proper email/password flow
-      // For this phase, if they use the form, we'll try to bypass for dev if backend allows it
-      await authService.googleLogin('mock_dev_token');
+      await authService.emailLogin(email, password);
       navigate('/dashboard');
     } catch (err: any) {
-      setError('Email login requires Google OAuth for now, or use dev token.');
+      setError(err.response?.data?.detail || 'Invalid email or password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await authService.emailLogin('dev@vshield.app', 'admin123');
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Demo login failed');
     } finally {
       setLoading(false);
     }
@@ -101,7 +118,7 @@ const Login = () => {
           <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-xl shadow-black/50 relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
             
-            <form onSubmit={handleMockLogin} className="space-y-5">
+            <form onSubmit={handleEmailLogin} className="space-y-5">
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-2">Email address</label>
                 <div className="relative">
@@ -110,6 +127,8 @@ const Login = () => {
                   </div>
                   <input 
                     type="email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@company.com" 
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none placeholder:text-slate-600"
                   />
@@ -127,6 +146,8 @@ const Login = () => {
                   </div>
                   <input 
                     type="password" 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••" 
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none placeholder:text-slate-600"
                   />
@@ -146,6 +167,15 @@ const Login = () => {
               >
                 {loading ? 'Signing in...' : 'Sign In'}
               </button>
+              
+              <button 
+                type="button"
+                onClick={handleDemoLogin}
+                disabled={loading}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium py-2.5 rounded-lg transition-colors border border-slate-700 disabled:opacity-50 flex justify-center items-center h-[44px]"
+              >
+                Demo Login
+              </button>
             </form>
 
             <div className="mt-8 flex items-center gap-4">
@@ -155,16 +185,22 @@ const Login = () => {
             </div>
 
             <div className="mt-8 flex justify-center">
-              <GoogleLogin
-                onSuccess={handleGoogleSuccess}
-                onError={() => setError('Google Sign-In failed.')}
-                useOneTap
-                theme="filled_black"
-                shape="rectangular"
-                size="large"
-                text="continue_with"
-                width="100%"
-              />
+              {import.meta.env.VITE_GOOGLE_CLIENT_ID ? (
+                <GoogleLogin
+                  onSuccess={handleGoogleSuccess}
+                  onError={() => setError('Google Sign-In failed.')}
+                  useOneTap
+                  theme="filled_black"
+                  shape="rectangular"
+                  size="large"
+                  text="continue_with"
+                  width="100%"
+                />
+              ) : (
+                <div className="w-full p-4 rounded-lg bg-slate-800/50 border border-slate-700 text-slate-400 text-sm text-center">
+                  Google authentication is not configured.
+                </div>
+              )}
             </div>
             
             <p className="mt-8 text-center text-sm text-slate-500">

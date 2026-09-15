@@ -10,13 +10,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-oauth/google": "^0.12.1",
     "axios": "^1.20.0",
-    "lucide-react": "^1.45.0",
+    "date-fns": "^4.4.0",
+    "lucide-react": "^1.46.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "recharts": "^3.10.1",
+    "react-hot-toast": "^2.6.0",
     "react-router-dom": "^6.22.3",
-    "@react-oauth/google": "^0.12.1"
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

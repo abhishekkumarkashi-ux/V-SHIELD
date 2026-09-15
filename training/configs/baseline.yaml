@@ -1,0 +1,42 @@
+# V-SHIELD Anti-Spoofing Baseline Training Configuration
+
+dataset:
+  name: "ASVspoof2019_LA"
+  dataset_root: "training/data/raw/ASVspoof2019_LA"
+  manifest_csv: "training/data/metadata/metadata.csv"
+  sample_rate: 16000
+  channels: 1
+  window_samples: 64000 # 4.0 seconds
+  hop_samples: 16000    # 1.0 second
+
+audio:
+  sample_rate: 16000
+
+features:
+  n_fft: 512
+  hop_length: 160
+  n_mels: 80
+
+model:
+  architecture: "LightweightAntiSpoofCNN"
+  dropout: 0.5
+
+training:
+  batch_size: 16
+  epochs: 20
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  grad_clip: 5.0
+  num_workers: 0        # Set to 2 or 4 on Linux/Kaggle GPU environments
+  seed: 42
+  pos_weight: "auto"    # "auto" balances ASVspoof 8:1 class ratio, or float
+  auto_pos_weight: true
+  early_stopping_patience: 5
+
+hardware:
+  device: "auto"        # "auto" (detects CUDA, falls back to CPU), "cuda", or "cpu"
+
+output:
+  checkpoint_dir: "training/checkpoints"
+  report_dir: "training/reports"
+  export_dir: "models/vshield_antispoof_v1"

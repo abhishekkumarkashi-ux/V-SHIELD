@@ -16,9 +16,16 @@ try:
 except ImportError as e:
     print(f"WARNING: Could not import ml modules. Ensure PYTHONPATH is correct. Error: {e}")
 
+import json
+
 class VoiceAntiSpoofModel:
     def __init__(self):
         self.is_loaded = False
+        self.model_status = "NOT_LOADED"
+        self.production_ready = False
+        self.validation_status = "UNKNOWN"
+        self.disclaimer = "Anti-spoofing model has not been loaded."
+        self.model_disclaimer = self.disclaimer
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
         self.max_length = 16000 * 4 # 4 seconds
@@ -26,6 +33,7 @@ class VoiceAntiSpoofModel:
     def load_model(self, model_path: str):
         if not os.path.exists(model_path):
             print(f"Model path does not exist: {model_path}")
+            self.model_status = "MISSING"
             return False
             
         try:
@@ -35,10 +43,33 @@ class VoiceAntiSpoofModel:
             self.model.to(self.device)
             self.model.eval()
             self.is_loaded = True
-            print(f"[V-SHIELD] Model successfully loaded on {self.device}")
+            
+            # Check for model metadata
+            meta_path = os.path.join(os.path.dirname(model_path), "model_meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r") as mf:
+                        meta = json.load(mf)
+                        self.model_status = meta.get("status", "UNTRAINED")
+                        self.production_ready = meta.get("production_ready", False)
+                        self.validation_status = meta.get("validation_status", "DEVELOPMENT_ONLY")
+                        self.disclaimer = meta.get("disclaimer", "Anti-spoofing model is not validated for production use.")
+                except Exception:
+                    self.model_status = "UNTRAINED"
+                    self.production_ready = False
+                    self.disclaimer = "Anti-spoofing model is not validated for production use."
+            else:
+                self.model_status = "UNTRAINED"
+                self.production_ready = False
+                self.disclaimer = "Anti-spoofing model is not validated for production use."
+            self.model_disclaimer = self.disclaimer
+                
+            print(f"[V-SHIELD] Model loaded on {self.device}. Status: {self.model_status}, Production ready: {self.production_ready}")
             print(f"[V-SHIELD] Model path: {model_path}")
             return True
         except Exception as e:
+            self.model_status = "CORRUPTED"
+            self.is_loaded = False
             print(f"Failed to load model: {e}")
             return False
             

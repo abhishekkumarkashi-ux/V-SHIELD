@@ -1,15 +1,32 @@
-from typing import Dict, Any
+import os
+import numpy as np
+from typing import Any
 
-# In-memory store mapping speaker_id -> speaker embedding tensor
-# Note: In a production scenario, embeddings should be saved to a database (e.g. pgvector)
-_speaker_store: Dict[str, Any] = {}
+EMBEDDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "embeddings")
+os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
+
+def _get_path(speaker_id: str) -> str:
+    return os.path.join(EMBEDDINGS_DIR, f"{speaker_id}.npy")
 
 def save_speaker_embedding(speaker_id: str, embedding: Any):
-    _speaker_store[speaker_id] = embedding
+    # Ensure it's a numpy array
+    if not isinstance(embedding, np.ndarray):
+        if hasattr(embedding, "numpy"):
+            embedding = embedding.cpu().numpy()
+        else:
+            embedding = np.array(embedding)
+    np.save(_get_path(speaker_id), embedding)
 
 def get_speaker_embedding(speaker_id: str) -> Any:
-    return _speaker_store.get(speaker_id)
+    path = _get_path(speaker_id)
+    if os.path.exists(path):
+        try:
+            return np.load(path)
+        except Exception:
+            return None
+    return None
 
 def remove_speaker_embedding(speaker_id: str):
-    if speaker_id in _speaker_store:
-        del _speaker_store[speaker_id]
+    path = _get_path(speaker_id)
+    if os.path.exists(path):
+        os.remove(path)
