@@ -82,7 +82,7 @@ class AASIST(nn.Module):
         self.lrelu_keras = nn.LeakyReLU(negative_slope=0.3)
         
         self.encoder = nn.Sequential(
-            Residual_block(d_args["filts"][1], first=True),
+            Residual_block([128, 32], first=True),
             Residual_block(d_args["filts"][2]),
             Residual_block(d_args["filts"][3]),
             Residual_block(d_args["filts"][4]),
