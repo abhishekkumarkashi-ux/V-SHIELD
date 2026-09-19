@@ -1,51 +1,55 @@
-@import "tailwindcss";
-
-@theme {
-  --color-background: #080d16;
-  --color-on-background: #f8fafc;
-  --color-surface: #080d16;
-  --color-on-surface: #f8fafc;
-  --color-surface-container-lowest: #0a0f18;
-  --color-surface-container-low: #101722;
-  --color-surface-container: #171d29;
-  --color-surface-container-high: #1e2532;
-  --color-surface-container-highest: #2a3140;
-  --color-outline: #64748b;
-  --color-outline-variant: #1e293b;
-  
-  --color-primary: #00c8e8;
-  --color-on-primary: #003640;
-  --color-primary-container: #00a0ba;
-  --color-primary-fixed-dim: #28d7f5;
-  
-  --color-secondary: #94a3b8;
-  --color-on-secondary: #0f172a;
-  
-  --color-tertiary: #45e0a0;
-  --color-on-tertiary: #003824;
-  
-  --color-error: #ffaaa0;
-  --color-on-error: #690005;
-
-  --spacing-space-xs: 0.25rem;
-  --spacing-space-sm: 0.5rem;
-  --spacing-space-md: 0.75rem;
-  --spacing-space-lg: 1rem;
-  --spacing-space-xl: 1.5rem;
-  --spacing-gutter-desktop: 1.25rem;
-
-  --font-headline-xl: 'Inter', sans-serif;
-  --font-headline-md: 'Inter', sans-serif;
-  --font-headline-sm: 'Inter', sans-serif;
-  --font-body-md: 'Inter', sans-serif;
-  --font-body-sm: 'Inter', sans-serif;
-  --font-label-md: 'JetBrains Mono', monospace;
-  --font-label-sm: 'JetBrains Mono', monospace;
-  --font-code-md: 'JetBrains Mono', monospace;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-background text-on-background font-body-md antialiased;
+    @apply bg-[#070b14] text-slate-100 min-h-screen overflow-x-hidden;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom Glassmorphism Panels */
+.glass-panel {
+  background: rgba(13, 19, 34, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.glass-panel-glow {
+  background: rgba(13, 19, 34, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  box-shadow: 0 0 25px -5px rgba(6, 182, 212, 0.15);
+}
+
+/* Gauge transitions */
+.gauge-needle {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: 50% 50%;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #070b14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1a2747;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #253866;
 }

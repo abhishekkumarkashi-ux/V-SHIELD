@@ -1,21 +1,24 @@
 {
   "name": "v-shield",
   "version": "1.0.0",
-  "description": "V-SHIELD is an AI-powered real-time voice security platform designed to analyze live voice communication and detect potentially AI-generated, cloned, spoofed, or manipulated voices.",
+  "description": "V-SHIELD (SIH 2026 - Problem Statement ID: 26104): Real-Time AI Voice Impersonation Detection & Fraud Prevention",
   "main": "index.js",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "frontend": "cd frontend && npm run dev",
     "backend": "cd backend && .\\venv\\Scripts\\uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
-    "start": "concurrently -k \"npm run backend\" \"npm run frontend\""
+    "start": "concurrently -k -n \"BACKEND,FRONTEND\" -c \"cyan.bold,magenta.bold\" \"npm run backend\" \"npm run frontend\"",
+    "test": "pytest tests/ -v"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "keywords": [
+    "voice-security",
+    "anti-spoofing",
+    "aasist",
+    "ecapa-tdnn",
+    "sih-2026"
+  ],
+  "author": "V-SHIELD Team",
+  "license": "Apache-2.0",
   "devDependencies": {
-    "concurrently": "^10.0.5"
+    "concurrently": "^8.2.2"
   }
 }

@@ -1,0 +1,16 @@
+[flake8]
+max-line-length = 100
+extend-ignore = E203, E501, E402, W503
+exclude =
+    .git,
+    .venv,
+    backend/venv,
+    venv,
+    __pycache__,
+    backend/app/weights,
+    backend/app/speechbrain_model,
+    frontend,
+    node_modules,
+    dist,
+    build,
+    samples

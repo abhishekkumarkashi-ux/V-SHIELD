@@ -1,8 +1,0 @@
-{
-  "model_name": "LightweightAntiSpoofCNN",
-  "version": "1.0.0-dev",
-  "status": "UNTRAINED",
-  "production_ready": false,
-  "validation_status": "DEVELOPMENT_ONLY",
-  "disclaimer": "Anti-spoofing model is not validated for production use. Its successful loading does not constitute detection accuracy or production readiness."
-}

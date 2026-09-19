@@ -1,35 +1,33 @@
-node_modules/
+# Environments & Dependencies
 venv/
-.env
-__pycache__/
-*.pyc
-*.pth
-*.pt
-**/data/raw/
-**/data/processed/
-ml/data/
-ml/models/
+.venv/
 backend/venv/
-backend/data/
-**/models/
-!models/
-!models/**/
-!models/**/model_meta.json
-!models/**/.gitkeep
-dist/
-build/
-.vscode/
-*.db
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
-training/data/
-training/checkpoints/
-training/reports/
-*.wav
-*.flac
-*.mp3
-*.m4a
-*.ogg
-*.zip
-*.tar
-*.tar.gz
+
+# Databases & local state
+*.db
+*.sqlite3
+backend/app/vshield.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test & Coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+
+# Temporary export and downloaded cache
+*.onnx.data
+backend/app/weights/*.onnx.data
+backend/app/speechbrain_model/
 

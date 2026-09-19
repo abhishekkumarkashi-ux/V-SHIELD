@@ -4,13 +4,43 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  darkMode: 'class',
   theme: {
     extend: {
-      colors: { 'primary-container': '#06b6d4', 'on-primary-fixed-variant': '#004e5c', 'error-container': '#93000a', 'on-secondary': '#002e6a', 'inverse-surface': '#dfe2f1', 'surface-container': '#1c1f2a', 'on-error-container': '#ffdad6', 'primary-fixed-dim': '#4cd7f6', 'outline': '#869397', 'on-background': '#dfe2f1', 'on-surface': '#dfe2f1', 'secondary': '#adc6ff', 'tertiary': '#4edea3', 'on-tertiary-fixed': '#002113', 'on-secondary-container': '#e6ecff', 'secondary-fixed': '#d8e2ff', 'secondary-container': '#0566d9', 'outline-variant': '#3d494c', 'on-error': '#690005', 'primary': '#4cd7f6', 'surface': '#0f131d', 'on-tertiary-container': '#00452e', 'inverse-primary': '#00687a', 'on-tertiary': '#003824', 'surface-tint': '#4cd7f6', 'on-primary-container': '#00424f', 'surface-dim': '#0f131d', 'surface-bright': '#353944', 'tertiary-container': '#1bbd85', 'surface-container-highest': '#313540', 'primary-fixed': '#acedff', 'on-secondary-fixed-variant': '#004395', 'error': '#ffb4ab', 'on-tertiary-fixed-variant': '#005236', 'surface-variant': '#313540', 'inverse-on-surface': '#2c303b', 'on-primary-fixed': '#001f26', 'on-surface-variant': '#bcc9cd', 'secondary-fixed-dim': '#adc6ff', 'surface-container-high': '#262a35', 'on-secondary-fixed': '#001a42', 'tertiary-fixed': '#6ffbbe', 'surface-container-lowest': '#0a0e18', 'tertiary-fixed-dim': '#4edea3', 'background': '#0f131d', 'on-primary': '#003640', 'surface-container-low': '#171b26' },
-      borderRadius: { DEFAULT: '0.125rem', lg: '0.25rem', xl: '0.5rem', full: '0.75rem' },
-      spacing: { 'space-xl': '1.5rem', 'space-lg': '1rem', 'margin-desktop': '1.5rem', 'space-sm': '0.5rem', 'space-xs': '0.25rem', 'gutter-desktop': '1.25rem', 'space-md': '0.75rem', 'margin': '1rem', 'gutter': '1rem' },
-      fontFamily: { 'headline-xl': ['Inter'], 'body-lg': ['Inter'], 'label-sm': ['JetBrains Mono'], 'headline-xl-mobile': ['Inter'], 'label-lg': ['JetBrains Mono'], 'headline-sm': ['Inter'], 'code-md': ['JetBrains Mono'], 'headline-md': ['Inter'], 'body-sm': ['Inter'], 'body-md': ['Inter'], 'label-md': ['JetBrains Mono'], 'headline-lg': ['Inter'] },
-      fontSize: { 'headline-xl': ['32px', { lineHeight: '40px', letterSpacing: '-0.02em', fontWeight: '600' }], 'body-lg': ['16px', { lineHeight: '24px', letterSpacing: '-0.005em', fontWeight: '400' }], 'label-sm': ['10px', { lineHeight: '14px', letterSpacing: '0.05em', fontWeight: '500' }], 'headline-xl-mobile': ['24px', { lineHeight: '32px', letterSpacing: '-0.01em', fontWeight: '600' }], 'label-lg': ['13px', { lineHeight: '18px', letterSpacing: '0.02em', fontWeight: '500' }], 'headline-sm': ['16px', { lineHeight: '24px', letterSpacing: '0em', fontWeight: '600' }], 'code-md': ['12px', { lineHeight: '18px', letterSpacing: '0em', fontWeight: '400' }], 'headline-md': ['20px', { lineHeight: '28px', letterSpacing: '-0.01em', fontWeight: '600' }], 'body-sm': ['12px', { lineHeight: '16px', letterSpacing: '0em', fontWeight: '400' }], 'body-md': ['14px', { lineHeight: '20px', letterSpacing: '0em', fontWeight: '400' }], 'label-md': ['12px', { lineHeight: '16px', letterSpacing: '0.03em', fontWeight: '500' }], 'headline-lg': ['24px', { lineHeight: '32px', letterSpacing: '-0.02em', fontWeight: '600' }] }
+      colors: {
+        shield: {
+          900: '#070b14',
+          850: '#0d1322',
+          800: '#111a30',
+          700: '#1a2747',
+          600: '#253866',
+        },
+        crimson: {
+          500: '#ef4444',
+          600: '#dc2626',
+          900: '#450a0a',
+        },
+        amber: {
+          500: '#f59e0b',
+          600: '#d97706',
+          900: '#451a03',
+        },
+        emerald: {
+          500: '#10b981',
+          600: '#059669',
+          900: '#064e3b',
+        }
+      },
+      animation: {
+        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'radar-sweep': 'sweep 4s linear infinite',
+      },
+      keyframes: {
+        sweep: {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg)' },
+        }
+      }
     },
   },
   plugins: [],

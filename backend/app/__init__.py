@@ -1,8 +1,3 @@
-"""V-SHIELD Backend Package."""
-import os
-import sys
+"""V-SHIELD Backend Package - SIH 2026 (Problem Statement ID: 26104)."""
 
-# Ensure repository root is on sys.path so top-level packages (ml, models) are cleanly importable
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+__version__ = "1.0.0"

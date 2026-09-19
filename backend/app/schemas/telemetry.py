@@ -1,0 +1,127 @@
+"""
+Telemetry & API schemas for V-SHIELD.
+"""
+
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+
+
+class TelemetryMetrics(BaseModel):
+    spoof_probability: float = Field(
+        ..., ge=0.0, le=1.0, description="AASIST probability of audio being synthetic/spoofed"
+    )
+    speaker_similarity: float = Field(
+        ..., ge=-1.0, le=1.0, description="ECAPA-TDNN cosine similarity against enrolled speaker"
+    )
+    buffer_energy_rms: float = Field(
+        ..., ge=0.0, description="Root-mean-square energy of the active sliding window"
+    )
+    vad_speech_ratio: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Proportion of frames identified as active speech (with margins)",
+    )
+    latency_ms: Optional[float] = Field(
+        None, description="End-to-end window inference latency in milliseconds"
+    )
+
+
+class TelemetryPacket(BaseModel):
+    timestamp: float = Field(..., description="Unix epoch timestamp in seconds")
+    risk_score: float = Field(
+        ..., ge=0.0, le=100.0, description="Multi-signal fused risk score (0-100)"
+    )
+    classification: Literal["LOW_RISK", "MEDIUM_RISK", "HIGH_RISK"] = Field(
+        ..., description="Tri-tier threat level"
+    )
+    metrics: TelemetryMetrics
+    recommended_action: Literal[
+        "ALLOW_CALL",
+        "MONITOR",
+        "FLAG_OPERATOR_VERIFICATION",
+        "STEP_UP_AUTH",
+        "TRIGGER_MFA_CALLBACK",
+        "QUARANTINE_TRANSACTION",
+        "TERMINATE_AND_ALERT",
+    ] = Field(..., description="Automated mitigation decision triggered by the Risk Engine")
+    mfa_status: Literal["NONE", "DISPATCHED", "COOLDOWN"] = Field(
+        default="NONE", description="Out-of-band MFA automated trigger status"
+    )
+
+
+class SpeakerEnrollRequest(BaseModel):
+    speaker_id: str = Field(
+        ..., min_length=1, max_length=64, description="Unique identifier for the registered speaker"
+    )
+    name: Optional[str] = Field(
+        None, max_length=128, description="Full name or role of the speaker"
+    )
+
+
+class SpeakerEnrollResponse(BaseModel):
+    success: bool
+    speaker_id: str
+    message: str
+    embedding_dim: int = 192
+
+
+class SpeakerProfile(BaseModel):
+    speaker_id: str
+    name: Optional[str] = None
+    enrolled_at: float
+    sample_count: int = 1
+
+
+class SystemHealthResponse(BaseModel):
+    status: str
+    version: str
+    device: str
+    aasist_loaded: bool
+    ecapa_loaded: bool
+    enrolled_speakers_count: int
+    aasist_onnx_loaded: bool = False
+    ecapa_onnx_loaded: bool = False
+
+
+class AnalyzeTelemetry(BaseModel):
+    spoof_probability: float = Field(
+        ..., ge=0.0, le=1.0, description="AASIST probability of audio being synthetic/spoofed"
+    )
+    speaker_similarity: float = Field(
+        ...,
+        ge=-1.0,
+        le=1.0,
+        description="ECAPA-TDNN cosine similarity between reference and test audio",
+    )
+
+
+class AnalyzeFileResponse(BaseModel):
+    status: str = Field(default="success", description="Status code or indicator")
+    risk_score: float = Field(
+        ..., ge=0.0, le=100.0, description="Calculated 0-100 Impersonation Risk Score"
+    )
+    classification: str = Field(..., description="High-level threat classification")
+    telemetry: AnalyzeTelemetry = Field(..., description="Acoustic & biometric model telemetry")
+    message: str = Field(..., description="Descriptive fraud decision and action guidance")
+
+
+class MfaVerifyRequest(BaseModel):
+    phone_number: str = Field(..., description="E.164 phone number of the target caller")
+    code: str = Field(
+        ..., min_length=4, max_length=10, description="Verification code received by caller"
+    )
+
+
+class MfaVerifyResponse(BaseModel):
+    success: bool
+    message: str
+    status: Literal["AUTHENTICATED_OVERRIDE", "FAILED", "COOLDOWN_ACTIVE"]
+
+
+class MfaChallengeResponse(BaseModel):
+    status: Literal["dispatched", "cooldown_active", "failed", "disabled"]
+    message: str
+    remaining_seconds: Optional[float] = None
+    phone_number: Optional[str] = None

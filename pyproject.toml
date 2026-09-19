@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "v-shield"
+version = "1.0.0"
+description = "V-SHIELD (SIH 2026): Real-Time AI Voice Impersonation Detection & Fraud Prevention"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "backend/venv",
+    "venv",
+    "__pycache__",
+    "backend/app/weights",
+    "backend/app/speechbrain_model",
+    "node_modules",
+    "frontend",
+    "dist",
+    "build",
+    "samples",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+]
+ignore = [
+    "E501",  # line length handled by formatter
+    "E402",  # module level import not at top of file
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312", "py313"]
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | backend/venv
+  | venv
+  | __pycache__
+  | backend/app/weights
+  | backend/app/speechbrain_model
+  | node_modules
+  | frontend
+  | dist
+  | build
+)/
+'''
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["backend"]
+addopts = "-v --cov=backend/app --cov-report=term-missing --cov-report=xml"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["backend/app"]
+omit = [
+    "*/tests/*",
+    "*/weights/*",
+    "*/speechbrain_model/*",
+    "*/venv/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+]
