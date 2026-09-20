@@ -4,9 +4,11 @@ FastAPI Real-Time Voice Integrity & Fraud Prevention Gateway.
 WebSocket Ingestion (/ws/live-call) & Biometric Speaker Verification.
 """
 
+import sys
 import time
 from typing import Optional
 
+import torch
 from fastapi import (
     FastAPI,
     File,
@@ -63,19 +65,91 @@ app.include_router(analyze_router, prefix="/api/v1")
 app.include_router(mfa_router, prefix="/api/v1")
 
 
+def print_startup_banner() -> None:
+    """Logs structured system capability and model readiness banner."""
+    cuda_avail = torch.cuda.is_available()
+    cuda_device = torch.cuda.get_device_name(0) if cuda_avail else "N/A"
+
+    aasist_loaded = bool(aasist_service.is_onnx_loaded or aasist_service.is_loaded)
+    if aasist_service.is_onnx_loaded:
+        anti_spoof_desc = f"AASIST Graph Attention (ONNX Runtime FP16 - {settings.AASIST_ONNX_PATH.name})"
+    elif aasist_service.is_loaded:
+        anti_spoof_desc = f"AASIST Graph Attention (PyTorch - {settings.AASIST_WEIGHTS_PATH.name})"
+    else:
+        anti_spoof_desc = f"AASIST Not Loaded ({getattr(aasist_service, 'load_error', 'Missing weights')})"
+
+    ecapa_loaded = bool(ecapa_service.is_onnx_loaded or ecapa_service.is_loaded)
+    if ecapa_service.is_onnx_loaded:
+        ecapa_desc = f"ECAPA-TDNN 192-dim (ONNX Runtime FP16 - {settings.ECAPA_ONNX_PATH.name})"
+    elif ecapa_service.is_loaded:
+        ecapa_desc = "ECAPA-TDNN (SpeechBrain PyTorch)"
+    else:
+        ecapa_desc = "ECAPA-TDNN (Offline acoustic signature)"
+
+    banner = f"""
+==================================================
+V-SHIELD BACKEND STARTUP
+==================================================
+Python:                     {sys.version.split()[0]}
+PyTorch:                    {torch.__version__}
+CUDA available:             {cuda_avail}
+CUDA device:                {cuda_device}
+Active Execution Device:    {aasist_service.device}
+Anti-spoof model:           {anti_spoof_desc}
+Anti-spoof model loaded:    {aasist_loaded}
+Speaker verification:       {ecapa_desc}
+Speaker verification loaded:{ecapa_loaded}
+Risk engine:                Multi-Signal EMA Fusion (alpha={settings.RISK_ALPHA})
+Risk engine loaded:         True
+Enrolled speakers:          {len(ecapa_service.get_enrolled_speakers())} profiles
+==================================================
+"""
+    print(banner.strip(), flush=True)
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    print_startup_banner()
+
+
+@app.get("/health", response_model=SystemHealthResponse)
 @app.get("/api/health", response_model=SystemHealthResponse)
 async def get_health() -> SystemHealthResponse:
-    """Returns platform operational readiness, device, and model statuses."""
+    """Returns platform operational readiness, device, and truthful model statuses."""
+    aasist_ready = bool(aasist_service.is_onnx_loaded or aasist_service.is_loaded)
+    ecapa_ready = bool(ecapa_service.is_onnx_loaded or ecapa_service.is_loaded)
+    models_ready = bool(aasist_ready and ecapa_ready)
+
+    if aasist_service.is_onnx_loaded:
+        anti_spoof_name = "AASIST (ONNX FP16)"
+    elif aasist_service.is_loaded:
+        anti_spoof_name = "AASIST (PyTorch)"
+    else:
+        anti_spoof_name = "None (AASIST Not Loaded)"
+
+    status_str = "ok" if models_ready else ("degraded" if (aasist_ready or ecapa_ready) else "error")
     speakers = ecapa_service.get_enrolled_speakers()
+
+    details = {}
+    if getattr(aasist_service, "load_error", None) and not aasist_ready:
+        details["aasist_error"] = str(aasist_service.load_error)
+    if getattr(ecapa_service, "load_error", None) and not ecapa_ready:
+        details["ecapa_error"] = str(ecapa_service.load_error)
+
     return SystemHealthResponse(
-        status="ONLINE",
-        version=settings.VERSION,
+        status=status_str,
+        model_loaded=models_ready,
         device=aasist_service.device,
-        aasist_loaded=aasist_service.is_loaded or aasist_service.is_onnx_loaded,
-        ecapa_loaded=ecapa_service.is_loaded or ecapa_service.is_onnx_loaded,
+        anti_spoof_model=anti_spoof_name,
+        speaker_verification_loaded=ecapa_ready,
+        version=settings.VERSION,
+        aasist_loaded=aasist_ready,
+        ecapa_loaded=ecapa_ready,
         enrolled_speakers_count=len(speakers),
         aasist_onnx_loaded=aasist_service.is_onnx_loaded,
         ecapa_onnx_loaded=ecapa_service.is_onnx_loaded,
+        cuda_available=torch.cuda.is_available(),
+        details=details if details else None,
     )
 
 

@@ -48,6 +48,7 @@ class AASISTService:
         self.ort_session: Optional["ort.InferenceSession"] = None
         self.is_onnx_loaded: bool = False
         self.is_loaded: bool = False
+        self.load_error: Optional[str] = None
 
         self._initialize_onnx()
         self._initialize_model()
@@ -61,8 +62,9 @@ class AASISTService:
     def _initialize_onnx(self) -> None:
         """Initializes ONNX Runtime session with CUDA and CPU providers."""
         if not HAS_ORT or not os.path.exists(self.onnx_path):
+            self.load_error = f"ONNX model file not found at {self.onnx_path}"
             print(
-                f"[AASISTService] ONNX model not found at {self.onnx_path}. Using PyTorch fallback."
+                f"[AASISTService] {self.load_error}. Using PyTorch fallback."
             )
             self.is_onnx_loaded = False
             return
@@ -83,8 +85,10 @@ class AASISTService:
                 f"[AASISTService] ONNX Runtime session active using: {self.ort_session.get_providers()[0]}"
             )
         except Exception as err:
+            import traceback
+            self.load_error = f"ONNX session initialization failed: {err}"
             print(
-                f"[AASISTService] ONNX session initialization failed ({err}). Falling back to PyTorch."
+                f"[AASISTService] ONNX initialization failed: {err}\n{traceback.format_exc()}. Falling back to PyTorch."
             )
             self.is_onnx_loaded = False
 
@@ -106,7 +110,7 @@ class AASISTService:
             print(f"[AASISTService] AASIST.pth successfully downloaded to {self.weights_path}")
         except Exception as exc:
             print(
-                f"[AASISTService] Warning: Could not download weights from web ({exc}). Running with initialized weights."
+                f"[AASISTService] Warning: Could not download weights from web ({exc})."
             )
         return self.weights_path
 
@@ -120,16 +124,20 @@ class AASISTService:
                 state_dict = torch.load(ckpt_path, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(state_dict, strict=False)
                 print(f"[AASISTService] Loaded PyTorch weights from {ckpt_path} on {self.device}")
-
-            self.model.to(self.device)
-            self.model.eval()
-            self.is_loaded = True
-        except Exception as err:
-            print(f"[AASISTService] Error during PyTorch model initialization: {err}")
-            if self.model is not None:
                 self.model.to(self.device)
                 self.model.eval()
                 self.is_loaded = True
+            else:
+                if not self.is_onnx_loaded:
+                    self.load_error = f"AASIST checkpoint missing or invalid at {ckpt_path}"
+                    print(f"[AASISTService] Error: {self.load_error}")
+                self.is_loaded = False
+        except Exception as err:
+            import traceback
+            if not self.is_onnx_loaded:
+                self.load_error = f"PyTorch AASIST initialization failed: {err}"
+            print(f"[AASISTService] Error during PyTorch model initialization: {err}\n{traceback.format_exc()}")
+            self.is_loaded = False
 
     def predict_spoof_prob(self, audio_np: np.ndarray) -> float:
         """

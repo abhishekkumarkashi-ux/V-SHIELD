@@ -75,14 +75,31 @@ class SpeakerProfile(BaseModel):
 
 
 class SystemHealthResponse(BaseModel):
-    status: str
-    version: str
-    device: str
-    aasist_loaded: bool
-    ecapa_loaded: bool
-    enrolled_speakers_count: int
-    aasist_onnx_loaded: bool = False
-    ecapa_onnx_loaded: bool = False
+    status: str = Field(..., description="Overall health status ('ok', 'degraded', or 'error')")
+    model_loaded: bool = Field(
+        ..., description="True if core AI inference models are loaded and ready"
+    )
+    device: str = Field(..., description="Active execution device ('cuda' or 'cpu')")
+    anti_spoof_model: str = Field(
+        ..., description="Name and runtime of the active anti-spoof model"
+    )
+    speaker_verification_loaded: bool = Field(
+        ..., description="True if speaker verification model is loaded and ready"
+    )
+    version: str = Field(default="1.0.0", description="V-SHIELD platform version")
+    aasist_loaded: bool = Field(default=False, description="AASIST model availability")
+    ecapa_loaded: bool = Field(default=False, description="ECAPA-TDNN model availability")
+    enrolled_speakers_count: int = Field(
+        default=0, description="Number of enrolled biometric profiles"
+    )
+    aasist_onnx_loaded: bool = Field(default=False, description="AASIST ONNX session status")
+    ecapa_onnx_loaded: bool = Field(default=False, description="ECAPA ONNX session status")
+    cuda_available: bool = Field(
+        default=False, description="Whether CUDA acceleration is available"
+    )
+    details: Optional[dict] = Field(
+        default=None, description="Detailed diagnostics or load error info"
+    )
 
 
 class AnalyzeTelemetry(BaseModel):

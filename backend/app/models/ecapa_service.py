@@ -45,6 +45,7 @@ class ECAPAService:
         self.is_onnx_loaded: bool = False
         self.classifier = None
         self.is_loaded: bool = False
+        self.load_error: Optional[str] = None
 
         # In-memory fast cache of speaker_id -> np.ndarray (192,)
         self._enrolled_embeddings: Dict[str, np.ndarray] = {}
@@ -65,8 +66,9 @@ class ECAPAService:
     def _load_onnx_model(self) -> None:
         """Initializes ONNX Runtime session for ECAPA-TDNN embedding extraction."""
         if not HAS_ORT or not os.path.exists(self.onnx_path):
+            self.load_error = f"ECAPA ONNX model not found at {self.onnx_path}"
             print(
-                f"[ECAPAService] ONNX model not found at {self.onnx_path}. Using PyTorch/Acoustic fallback."
+                f"[ECAPAService] {self.load_error}. Using PyTorch/Acoustic fallback."
             )
             self.is_onnx_loaded = False
             return
@@ -87,8 +89,10 @@ class ECAPAService:
                 f"[ECAPAService] ONNX Runtime session active using: {self.ort_session.get_providers()[0]}"
             )
         except Exception as err:
+            import traceback
+            self.load_error = f"ECAPA ONNX session initialization failed: {err}"
             print(
-                f"[ECAPAService] ONNX session initialization failed ({err}). Falling back to SpeechBrain."
+                f"[ECAPAService] ONNX initialization failed: {err}\n{traceback.format_exc()}. Falling back to SpeechBrain."
             )
             self.is_onnx_loaded = False
 
