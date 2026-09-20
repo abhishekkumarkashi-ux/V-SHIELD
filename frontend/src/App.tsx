@@ -20,7 +20,7 @@ import { AudioWaveform } from './components/AudioWaveform';
 import { TelemetryBreakdown } from './components/TelemetryBreakdown';
 import { MitigationAlert } from './components/MitigationAlert';
 import { FileUploadAnalyzer } from './components/FileUploadAnalyzer';
-import { fetchHealth, fetchSpeakers, SystemHealth } from './services/api';
+import { fetchHealth, fetchSpeakers, ensureAuthToken, SystemHealth } from './services/api';
 
 interface SpeakerOption {
   speaker_id: string;
@@ -40,6 +40,11 @@ export const App: React.FC = () => {
   const [backendStatus, setBackendStatus] = useState<
     'CHECKING' | 'ONLINE' | 'MODEL_ERROR' | 'DEGRADED' | 'OFFLINE'
   >('CHECKING');
+
+  // Authenticate operator session on mount
+  useEffect(() => {
+    ensureAuthToken();
+  }, []);
 
   // WebSocket Telemetry Hook
   const {

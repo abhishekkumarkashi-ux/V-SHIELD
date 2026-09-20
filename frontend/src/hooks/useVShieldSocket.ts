@@ -71,12 +71,14 @@ export type PipelineStatus = 'WAITING_FOR_AUDIO' | 'LISTENING' | 'ANALYZING' | '
 interface UseVShieldSocketProps {
   url?: string;
   speakerId?: string | null;
+  token?: string | null;
   onPacketReceived?: (packet: TelemetryPacket) => void;
 }
 
 export function useVShieldSocket({
   url = 'ws://localhost:8000/ws/live-call',
   speakerId = null,
+  token = null,
   onPacketReceived,
 }: UseVShieldSocketProps = {}) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -99,6 +101,10 @@ export function useVShieldSocket({
     if (speakerId) {
       wsUrl.searchParams.set('speaker_id', speakerId);
     }
+    const tokenToUse = token || localStorage.getItem('vshield_auth_token');
+    if (tokenToUse) {
+      wsUrl.searchParams.set('token', tokenToUse);
+    }
 
     try {
       const ws = new WebSocket(wsUrl.toString());
@@ -108,7 +114,15 @@ export function useVShieldSocket({
         setStatus('connected');
         setLastError(null);
         console.log('[V-SHIELD WS] Connected to backend telemetry gateway');
-        ws.send(JSON.stringify({ type: 'start', speaker_id: speakerId, format: 'float32' }));
+        const startPayload: Record<string, any> = {
+          type: 'start',
+          speaker_id: speakerId,
+          format: 'float32',
+        };
+        if (tokenToUse) {
+          startPayload.token = tokenToUse;
+        }
+        ws.send(JSON.stringify(startPayload));
       };
 
       ws.onmessage = (event) => {
@@ -139,13 +153,15 @@ export function useVShieldSocket({
               return;
             }
             if (
+              data.type === 'auth_error' ||
+              data.type === 'session_error' ||
               data.type === 'model_error' ||
               data.type === 'audio_error' ||
               data.type === 'protocol_error' ||
               (data.type === 'analysis' && data.status === 'error')
             ) {
-              console.warn('[V-SHIELD WS] Error received from gateway:', data);
-              setLastError(data.error || 'Gateway protocol error');
+              console.warn(`[V-SHIELD WS] ${data.type}:`, data);
+              setLastError(data.message || data.error || 'Gateway protocol error');
               setPipelineStatus(data.pipeline_status || 'ANALYSIS_ERROR');
               return;
             }
@@ -185,15 +201,18 @@ export function useVShieldSocket({
       console.error('[V-SHIELD WS] Connection failed:', err);
       setStatus('error');
     }
-  }, [url, speakerId, onPacketReceived]);
+  }, [url, speakerId, token, onPacketReceived]);
 
   const startSession = useCallback(() => {
+    const tokenToUse = token || localStorage.getItem('vshield_auth_token');
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'start', speaker_id: speakerId }));
+      const payload: Record<string, any> = { type: 'start', speaker_id: speakerId };
+      if (tokenToUse) payload.token = tokenToUse;
+      wsRef.current.send(JSON.stringify(payload));
     } else {
       connect();
     }
-  }, [connect, speakerId]);
+  }, [connect, speakerId, token]);
 
   const stopSession = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

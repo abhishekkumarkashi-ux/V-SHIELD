@@ -13,16 +13,18 @@ Verifies:
 import json
 
 import pytest
+from app.core.auth import get_default_operator_token
 from app.main import app
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
+TOKEN = get_default_operator_token()
 
 
 @pytest.mark.parametrize("endpoint", ["/ws/live-call", "/ws/analyze"])
 def test_websocket_start_and_stop_session(endpoint):
     """Verify start/stop session lifecycle preserves socket connection on both endpoints."""
-    with client.websocket_connect(endpoint) as ws:
+    with client.websocket_connect(f"{endpoint}?token={TOKEN}") as ws:
         # 1. Send start
         ws.send_text(json.dumps({"type": "start", "speaker_id": "exec-001"}))
         started = json.loads(ws.receive_text())
@@ -43,7 +45,7 @@ def test_websocket_start_and_stop_session(endpoint):
 
 def test_websocket_malformed_json_handling():
     """Verify invalid JSON returns protocol_error and does not crash the gateway."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         # Send invalid JSON
         ws.send_text("{bad-json")
         err_msg = json.loads(ws.receive_text())
@@ -58,7 +60,11 @@ def test_websocket_malformed_json_handling():
 
 def test_websocket_empty_binary_handling():
     """Verify empty binary packet returns audio_error safely."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
+        # Start session first
+        ws.send_text(json.dumps({"type": "start", "format": "float32"}))
+        _ = json.loads(ws.receive_text())
+
         # Send 0-length bytes
         ws.send_bytes(b"")
         err_msg = json.loads(ws.receive_text())
@@ -68,7 +74,7 @@ def test_websocket_empty_binary_handling():
 
 def test_websocket_switch_speaker():
     """Verify speaker_id switching on-the-fly."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "switch_speaker", "speaker_id": "exec-002"}))
         resp = json.loads(ws.receive_text())
         assert resp["type"] == "speaker_switched"
@@ -79,7 +85,7 @@ def test_websocket_float32_pcm_streaming():
     """Verify raw 16kHz Float32 PCM streaming over WebSocket produces telemetry packets."""
     import numpy as np
 
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         # Start session with float32 format
         ws.send_text(json.dumps({"type": "start", "speaker_id": "exec-001", "format": "float32"}))
         started = json.loads(ws.receive_text())
@@ -100,7 +106,11 @@ def test_websocket_float32_pcm_streaming():
 
 def test_websocket_audio_packet_too_small():
     """Verify audio packets smaller than 4 bytes return audio_error."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
+        # Start session first
+        ws.send_text(json.dumps({"type": "start", "format": "float32"}))
+        _ = json.loads(ws.receive_text())
+
         ws.send_bytes(b"\x00\x01")
         err_msg = json.loads(ws.receive_text())
         assert err_msg["type"] == "audio_error"
@@ -109,7 +119,7 @@ def test_websocket_audio_packet_too_small():
 
 def test_websocket_misaligned_float32_audio():
     """Verify misaligned Float32 audio chunks return audio_error."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
 
@@ -123,7 +133,7 @@ def test_websocket_non_finite_float32_audio():
     """Verify Float32 audio with NaNs or Infs is rejected safely."""
     import numpy as np
 
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
 
@@ -139,7 +149,7 @@ def test_websocket_out_of_bounds_amplitude_audio():
     """Verify extreme amplitude audio (> 10.0 peak) is rejected."""
     import numpy as np
 
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
 
@@ -155,7 +165,7 @@ def test_websocket_audio_metrics_packet_reporting():
     """Verify unprimed audio chunks emit audio_metrics telemetry for frontend instrumentation."""
     import numpy as np
 
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
 

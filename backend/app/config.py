@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["*"]
 
+    # Authentication & Session Security (SIH 2026)
+    JWT_SECRET_KEY: str = "vshield-production-core-security-secret-key-sih2026-auth"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    SESSION_IDLE_TIMEOUT_SECONDS: int = 300  # 5 minutes idle timeout
+    SESSION_MAX_DURATION_SECONDS: int = 3600  # 1 hour max session lifetime
+    DEMO_OPERATOR_USERNAME: str = "analyst@vshield.internal"
+    DEMO_OPERATOR_PASSWORD: str = "VShieldSecure2026!"
+
     model_config = SettingsConfigDict(env_file=".env", extra="allow")
 
 

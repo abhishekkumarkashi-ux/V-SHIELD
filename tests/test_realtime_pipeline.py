@@ -25,15 +25,17 @@ import json
 from unittest.mock import patch
 
 import numpy as np
+from app.core.auth import get_default_operator_token
 from app.main import app
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
+TOKEN = get_default_operator_token()
 
 
 def test_realtime_pipeline_lifecycle_and_states():
     """Verify state transitions: READY -> WAITING_FOR_AUDIO -> LISTENING -> ANALYZING -> READY."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         # Query initial state
         ws.send_text(json.dumps({"type": "get_status"}))
         st = json.loads(ws.receive_text())
@@ -99,7 +101,7 @@ def test_realtime_pipeline_exception_handling_no_zero_default():
       "error": "..."
     }
     """
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
 
@@ -121,7 +123,7 @@ def test_realtime_pipeline_exception_handling_no_zero_default():
 
 def test_realtime_pipeline_unenrolled_speaker_null_similarity():
     """Verify that when no speaker_id is provided, speaker_similarity is None (not 0.0)."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         # Start without speaker_id
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
@@ -138,7 +140,7 @@ def test_realtime_pipeline_unenrolled_speaker_null_similarity():
 
 def test_realtime_pipeline_silence_vad_suppression():
     """Verify that a window of pure silence suppresses high risk scores via VAD guard."""
-    with client.websocket_connect("/ws/live-call") as ws:
+    with client.websocket_connect(f"/ws/live-call?token={TOKEN}") as ws:
         ws.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws.receive_text())
 

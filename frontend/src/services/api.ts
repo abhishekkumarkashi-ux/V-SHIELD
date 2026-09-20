@@ -68,3 +68,63 @@ export async function fetchSpeakers(): Promise<SpeakerProfile[]> {
 
   return response.json();
 }
+
+/**
+ * Returns currently stored authentication token from localStorage.
+ */
+export function getAuthToken(): string | null {
+  return localStorage.getItem('vshield_auth_token');
+}
+
+/**
+ * Persists an operator authentication token.
+ */
+export function setAuthToken(token: string): void {
+  localStorage.setItem('vshield_auth_token', token);
+}
+
+/**
+ * Ensures an active operator session token exists.
+ * If not already in localStorage, automatically logs in using the default operator account.
+ */
+export async function ensureAuthToken(): Promise<string> {
+  const cached = getAuthToken();
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    let res: Response;
+    try {
+      res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'analyst@vshield.internal',
+          password: 'VShieldSecure2026!',
+        }),
+      });
+    } catch {
+      res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'analyst@vshield.internal',
+          password: 'VShieldSecure2026!',
+        }),
+      });
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.access_token) {
+        setAuthToken(data.access_token);
+        return data.access_token;
+      }
+    }
+  } catch (err) {
+    console.warn('[V-SHIELD Auth] Auto-authentication notice:', err);
+  }
+
+  return '';
+}

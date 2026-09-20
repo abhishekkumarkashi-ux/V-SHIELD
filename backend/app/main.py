@@ -24,6 +24,12 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.core.auth import (
+    AnalysisSession,
+    TokenExpiredError,
+    sanitize_url_for_logging,
+    verify_access_token,
+)
 from app.core.buffer import AudioCircularBuffer
 from app.core.risk_engine import RiskEngine
 from app.core.vad import MarginPreservingVAD
@@ -62,10 +68,12 @@ mfa_service = MFAService.get_instance()
 
 # Mount API Routers
 from app.routers.analyze import router as analyze_router
+from app.routers.auth import router as auth_router
 from app.routers.mfa import router as mfa_router
 
 app.include_router(analyze_router, prefix="/api/v1")
 app.include_router(mfa_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
 
 
 def print_startup_banner() -> None:
@@ -75,11 +83,15 @@ def print_startup_banner() -> None:
 
     aasist_loaded = bool(aasist_service.is_onnx_loaded or aasist_service.is_loaded)
     if aasist_service.is_onnx_loaded:
-        anti_spoof_desc = f"AASIST Graph Attention (ONNX Runtime FP16 - {settings.AASIST_ONNX_PATH.name})"
+        anti_spoof_desc = (
+            f"AASIST Graph Attention (ONNX Runtime FP16 - {settings.AASIST_ONNX_PATH.name})"
+        )
     elif aasist_service.is_loaded:
         anti_spoof_desc = f"AASIST Graph Attention (PyTorch - {settings.AASIST_WEIGHTS_PATH.name})"
     else:
-        anti_spoof_desc = f"AASIST Not Loaded ({getattr(aasist_service, 'load_error', 'Missing weights')})"
+        anti_spoof_desc = (
+            f"AASIST Not Loaded ({getattr(aasist_service, 'load_error', 'Missing weights')})"
+        )
 
     ecapa_loaded = bool(ecapa_service.is_onnx_loaded or ecapa_service.is_loaded)
     if ecapa_service.is_onnx_loaded:
@@ -130,7 +142,9 @@ async def get_health() -> SystemHealthResponse:
     else:
         anti_spoof_name = "None (AASIST Not Loaded)"
 
-    status_str = "ok" if models_ready else ("degraded" if (aasist_ready or ecapa_ready) else "error")
+    status_str = (
+        "ok" if models_ready else ("degraded" if (aasist_ready or ecapa_ready) else "error")
+    )
     speakers = ecapa_service.get_enrolled_speakers()
 
     details = {}
@@ -211,17 +225,66 @@ async def websocket_live_call(
     target_phone: Optional[str] = Query(
         None, description="Target phone number for MFA challenge dispatch"
     ),
+    token: Optional[str] = Query(None, description="HMAC-SHA256 JWT Authentication Token"),
+    auth_token: Optional[str] = Query(None, description="Alternative auth token query param"),
 ):
     """
     Real-Time Audio Ingestion & Telemetry Streaming Gateway.
     Mounted at both /ws/live-call and /ws/analyze.
     Receives: Binary PCM audio chunks or structured JSON control packets.
     Sends: Structured JSON TelemetryPacket / Session status events.
+    Enforces authentication and active session state checks.
     """
     await websocket.accept()
     session_id = f"sess_{int(time.time() * 1000)}"
-    endpoint_path = websocket.url.path
+    endpoint_path = sanitize_url_for_logging(websocket.url.path)
     print(f"[WS] Client connected to {endpoint_path} (session={session_id})")
+
+    # Extract potential authentication token
+    auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
+    header_token = None
+    if auth_header and auth_header.strip().lower().startswith("bearer "):
+        header_token = auth_header.strip()[7:].strip()
+
+    candidate_token = token or auth_token or header_token
+    if not candidate_token:
+        subprotocols = websocket.headers.get("sec-websocket-protocol", "").split(",")
+        for subproto in subprotocols:
+            subproto = subproto.strip()
+            if subproto.startswith("vshield-token."):
+                candidate_token = subproto[len("vshield-token.") :]
+                break
+
+    authenticated_user = None
+    if candidate_token:
+        try:
+            authenticated_user = verify_access_token(candidate_token)
+        except TokenExpiredError:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "auth_error",
+                        "error": "expired session",
+                        "code": "EXPIRED_SESSION",
+                        "message": "Authentication token has expired. Re-authentication required.",
+                    }
+                )
+            )
+            await websocket.close(code=1008)
+            return
+        except Exception:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "auth_error",
+                        "error": "unauthenticated",
+                        "code": "UNAUTHENTICATED",
+                        "message": "Invalid authentication credentials.",
+                    }
+                )
+            )
+            await websocket.close(code=1008)
+            return
 
     # Create dedicated per-session audio buffer, VAD, and risk state
     buffer = AudioCircularBuffer(
@@ -234,10 +297,29 @@ async def websocket_live_call(
     )
     risk_engine = RiskEngine(alpha=settings.RISK_ALPHA)
 
+    # Initialize live analysis session tracker
+    user_id = (
+        authenticated_user.get("sub", "usr_unauthenticated")
+        if authenticated_user
+        else "usr_unauthenticated"
+    )
+    username = (
+        authenticated_user.get("username", "unauthenticated")
+        if authenticated_user
+        else "unauthenticated"
+    )
+    analysis_session = AnalysisSession(
+        session_id=session_id,
+        user_id=user_id,
+        username=username,
+        role=authenticated_user.get("role", "operator") if authenticated_user else "none",
+        max_duration_sec=float(settings.SESSION_MAX_DURATION_SECONDS),
+        idle_timeout_sec=float(settings.SESSION_IDLE_TIMEOUT_SECONDS),
+    )
+
     active_speaker_id = speaker_id
     active_target_phone = target_phone or settings.DEFAULT_MFA_TARGET_PHONE
     active_audio_format = None
-    session_active = False
     pipeline_state = "READY"
     last_metrics_report_time = 0.0
 
@@ -253,40 +335,90 @@ async def websocket_live_call(
                     )
                     continue
 
+                # 1. Reject unauthenticated audio immediately
+                if authenticated_user is None:
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "auth_error",
+                                "error": "unauthenticated",
+                                "code": "UNAUTHENTICATED",
+                                "message": "Unauthenticated audio rejected. Valid user token required.",
+                            }
+                        )
+                    )
+                    continue
+
+                # 2. Reject inactive session or expired session
+                can_accept, reason = analysis_session.validate_can_accept_audio()
+                if not can_accept:
+                    if reason == "inactive session":
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "session_error",
+                                    "error": "inactive session",
+                                    "code": "INACTIVE_SESSION",
+                                    "message": "Inactive analysis session. Send 'start' before streaming audio.",
+                                }
+                            )
+                        )
+                    elif reason == "expired session":
+                        pipeline_state = "READY"
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "session_error",
+                                    "error": "expired session",
+                                    "code": "EXPIRED_SESSION",
+                                    "message": "Live analysis session has expired.",
+                                }
+                            )
+                        )
+                    continue
+
                 if len(raw_chunk) < 4:
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "audio_error",
-                            "error": f"Audio packet too small: expected >= 4 bytes (got {len(raw_chunk)})",
-                        })
+                        json.dumps(
+                            {
+                                "type": "audio_error",
+                                "error": f"Audio packet too small: expected >= 4 bytes (got {len(raw_chunk)})",
+                            }
+                        )
                     )
                     continue
 
                 # Check frame alignment
                 if active_audio_format == "float32" and len(raw_chunk) % 4 != 0:
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "audio_error",
-                            "error": f"Malformed Float32 audio packet: length {len(raw_chunk)} not divisible by 4",
-                        })
+                        json.dumps(
+                            {
+                                "type": "audio_error",
+                                "error": f"Malformed Float32 audio packet: length {len(raw_chunk)} not divisible by 4",
+                            }
+                        )
                     )
                     continue
                 elif active_audio_format == "pcm16" and len(raw_chunk) % 2 != 0:
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "audio_error",
-                            "error": f"Malformed PCM16 audio packet: length {len(raw_chunk)} not divisible by 2",
-                        })
+                        json.dumps(
+                            {
+                                "type": "audio_error",
+                                "error": f"Malformed PCM16 audio packet: length {len(raw_chunk)} not divisible by 2",
+                            }
+                        )
                     )
                     continue
                 elif active_audio_format is None and (
                     len(raw_chunk) % 4 != 0 and len(raw_chunk) % 2 != 0
                 ):
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "audio_error",
-                            "error": f"Malformed audio packet: length {len(raw_chunk)} not aligned to sample frame size",
-                        })
+                        json.dumps(
+                            {
+                                "type": "audio_error",
+                                "error": f"Malformed audio packet: length {len(raw_chunk)} not aligned to sample frame size",
+                            }
+                        )
                     )
                     continue
 
@@ -302,10 +434,12 @@ async def websocket_live_call(
                         if not np.all(np.isfinite(candidate)):
                             if active_audio_format == "float32":
                                 await websocket.send_text(
-                                    json.dumps({
-                                        "type": "audio_error",
-                                        "error": "Non-finite values (NaN / Inf) detected in Float32 audio stream",
-                                    })
+                                    json.dumps(
+                                        {
+                                            "type": "audio_error",
+                                            "error": "Non-finite values (NaN / Inf) detected in Float32 audio stream",
+                                        }
+                                    )
                                 )
                                 continue
                             else:
@@ -317,10 +451,12 @@ async def websocket_live_call(
                             if max_amp > 10.0:
                                 if active_audio_format == "float32":
                                     await websocket.send_text(
-                                        json.dumps({
-                                            "type": "audio_error",
-                                            "error": f"Float32 audio amplitude out of bounds (peak: {max_amp:.2f} > 10.0)",
-                                        })
+                                        json.dumps(
+                                            {
+                                                "type": "audio_error",
+                                                "error": f"Float32 audio amplitude out of bounds (peak: {max_amp:.2f} > 10.0)",
+                                            }
+                                        )
                                     )
                                     continue
                                 else:
@@ -330,10 +466,12 @@ async def websocket_live_call(
                     except Exception as parse_err:
                         if active_audio_format == "float32":
                             await websocket.send_text(
-                                json.dumps({
-                                    "type": "audio_error",
-                                    "error": f"Failed to parse Float32 audio chunk: {parse_err}",
-                                })
+                                json.dumps(
+                                    {
+                                        "type": "audio_error",
+                                        "error": f"Failed to parse Float32 audio chunk: {parse_err}",
+                                    }
+                                )
                             )
                             continue
                         is_f32 = False
@@ -346,10 +484,12 @@ async def websocket_live_call(
                         audio_samples = (int16_arr.astype(np.float32) / 32768.0).copy()
                     except Exception as pcm_err:
                         await websocket.send_text(
-                            json.dumps({
-                                "type": "audio_error",
-                                "error": f"Failed to parse PCM16 audio chunk: {pcm_err}",
-                            })
+                            json.dumps(
+                                {
+                                    "type": "audio_error",
+                                    "error": f"Failed to parse PCM16 audio chunk: {pcm_err}",
+                                }
+                            )
                         )
                         continue
 
@@ -362,8 +502,7 @@ async def websocket_live_call(
                 chunk_rms = float(np.sqrt(np.mean(audio_samples**2))) if sample_count > 0 else 0.0
                 chunk_peak = float(np.max(np.abs(audio_samples))) if sample_count > 0 else 0.0
 
-                if not session_active:
-                    session_active = True
+                analysis_session.record_activity()
                 if pipeline_state in ("READY", "WAITING_FOR_AUDIO"):
                     pipeline_state = "LISTENING"
 
@@ -371,10 +510,12 @@ async def websocket_live_call(
                     buffer.append_samples(audio_samples)
                 except Exception as buf_err:
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "audio_error",
-                            "error": f"Audio buffer ingestion failure: {buf_err}",
-                        })
+                        json.dumps(
+                            {
+                                "type": "audio_error",
+                                "error": f"Audio buffer ingestion failure: {buf_err}",
+                            }
+                        )
                     )
                     continue
 
@@ -481,12 +622,14 @@ async def websocket_live_call(
                         pipeline_state = "ANALYSIS_ERROR"
                         print(f"[WS Error] Inference pipeline failure: {model_err}")
                         await websocket.send_text(
-                            json.dumps({
-                                "type": "analysis",
-                                "status": "error",
-                                "pipeline_status": "ANALYSIS_ERROR",
-                                "error": f"Inference pipeline failure: {model_err}",
-                            })
+                            json.dumps(
+                                {
+                                    "type": "analysis",
+                                    "status": "error",
+                                    "pipeline_status": "ANALYSIS_ERROR",
+                                    "error": f"Inference pipeline failure: {model_err}",
+                                }
+                            )
                         )
 
                 # Instrument and report incoming audio metrics at bounded intervals
@@ -514,17 +657,113 @@ async def websocket_live_call(
                     payload = json.loads(message["text"])
                 except Exception as json_err:
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "protocol_error",
-                            "error": f"Malformed JSON control packet: {json_err}",
-                        })
+                        json.dumps(
+                            {
+                                "type": "protocol_error",
+                                "error": f"Malformed JSON control packet: {json_err}",
+                            }
+                        )
                     )
                     continue
 
                 msg_type = payload.get("type") or payload.get("action")
+                payload_token = payload.get("token") or payload.get("auth_token")
+
+                # Handle in-band authentication if unauthenticated
+                if authenticated_user is None:
+                    if msg_type in ("auth", "authenticate", "login") or payload_token:
+                        if payload_token:
+                            try:
+                                authenticated_user = verify_access_token(payload_token)
+                                analysis_session.user_id = authenticated_user.get("sub", "usr_auth")
+                                analysis_session.username = authenticated_user.get(
+                                    "username", "analyst"
+                                )
+                                analysis_session.role = authenticated_user.get("role", "operator")
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "authenticated",
+                                            "user": {
+                                                "user_id": analysis_session.user_id,
+                                                "username": analysis_session.username,
+                                                "role": analysis_session.role,
+                                            },
+                                            "message": "Authentication successful.",
+                                        }
+                                    )
+                                )
+                                if msg_type in ("auth", "authenticate", "login"):
+                                    continue
+                            except TokenExpiredError:
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "auth_error",
+                                            "error": "expired session",
+                                            "code": "EXPIRED_SESSION",
+                                            "message": "Authentication token has expired.",
+                                        }
+                                    )
+                                )
+                                continue
+                            except Exception:
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "auth_error",
+                                            "error": "unauthenticated",
+                                            "code": "UNAUTHENTICATED",
+                                            "message": "Invalid authentication credentials.",
+                                        }
+                                    )
+                                )
+                                continue
+                        else:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "auth_error",
+                                        "error": "unauthenticated",
+                                        "code": "UNAUTHENTICATED",
+                                        "message": "Authentication token required.",
+                                    }
+                                )
+                            )
+                            continue
+                    else:
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "auth_error",
+                                    "error": "unauthenticated",
+                                    "code": "UNAUTHENTICATED",
+                                    "message": "Authentication required. Provide a valid token before issuing commands.",
+                                }
+                            )
+                        )
+                        continue
+
+                # Client is authenticated
+                analysis_session.record_activity()
 
                 if msg_type == "start":
-                    session_active = True
+                    # Check token or session expiration
+                    token_exp = authenticated_user.get("exp")
+                    if token_exp and time.time() >= int(token_exp):
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "session_error",
+                                    "error": "expired session",
+                                    "code": "EXPIRED_SESSION",
+                                    "message": "Authentication token has expired.",
+                                }
+                            )
+                        )
+                        continue
+
+                    analysis_session.start()
                     pipeline_state = "WAITING_FOR_AUDIO"
                     if "speaker_id" in payload:
                         active_speaker_id = payload["speaker_id"]
@@ -536,55 +775,65 @@ async def websocket_live_call(
                     risk_engine.reset()
                     last_metrics_report_time = 0.0
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "session_started",
-                            "session_id": session_id,
-                            "speaker_id": active_speaker_id,
-                            "format": active_audio_format or "auto",
-                            "sample_rate": sample_rate,
-                            "pipeline_status": "WAITING_FOR_AUDIO",
-                        })
+                        json.dumps(
+                            {
+                                "type": "session_started",
+                                "session_id": session_id,
+                                "user_id": analysis_session.user_id,
+                                "speaker_id": active_speaker_id,
+                                "format": active_audio_format or "auto",
+                                "sample_rate": sample_rate,
+                                "pipeline_status": "WAITING_FOR_AUDIO",
+                            }
+                        )
                     )
 
                 elif msg_type == "stop":
-                    session_active = False
+                    analysis_session.stop()
                     pipeline_state = "READY"
                     buffer.reset()
                     risk_engine.reset()
                     last_metrics_report_time = 0.0
                     # Do NOT close the WebSocket on normal stop
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "session_stopped",
-                            "session_id": session_id,
-                            "pipeline_status": "READY",
-                            "message": "Live call analysis session stopped.",
-                        })
+                        json.dumps(
+                            {
+                                "type": "session_stopped",
+                                "session_id": session_id,
+                                "pipeline_status": "READY",
+                                "message": "Live call analysis session stopped.",
+                            }
+                        )
                     )
 
                 elif msg_type == "reset":
                     buffer.reset()
                     risk_engine.reset()
                     last_metrics_report_time = 0.0
-                    pipeline_state = "WAITING_FOR_AUDIO" if session_active else "READY"
+                    pipeline_state = "WAITING_FOR_AUDIO" if analysis_session.is_active else "READY"
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "session_reset",
-                            "session_id": session_id,
-                            "pipeline_status": pipeline_state,
-                            "message": "Audio buffer and risk engine state reset.",
-                        })
+                        json.dumps(
+                            {
+                                "type": "session_reset",
+                                "session_id": session_id,
+                                "pipeline_status": pipeline_state,
+                                "message": "Audio buffer and risk engine state reset.",
+                            }
+                        )
                     )
 
                 elif msg_type in ("status", "get_status"):
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "pipeline_status",
-                            "status": pipeline_state,
-                            "session_id": session_id,
-                            "session_active": session_active,
-                            "speaker_id": active_speaker_id,
-                        })
+                        json.dumps(
+                            {
+                                "type": "pipeline_status",
+                                "status": pipeline_state,
+                                "session_id": session_id,
+                                "session_active": analysis_session.is_active,
+                                "user_id": analysis_session.user_id,
+                                "speaker_id": active_speaker_id,
+                            }
+                        )
                     )
 
                 elif msg_type == "switch_speaker" or "speaker_id" in payload:
@@ -593,18 +842,22 @@ async def websocket_live_call(
                     if "target_phone" in payload:
                         active_target_phone = payload["target_phone"]
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "speaker_switched",
-                            "speaker_id": active_speaker_id,
-                        })
+                        json.dumps(
+                            {
+                                "type": "speaker_switched",
+                                "speaker_id": active_speaker_id,
+                            }
+                        )
                     )
 
                 else:
                     await websocket.send_text(
-                        json.dumps({
-                            "type": "unknown_message",
-                            "received_type": str(msg_type),
-                        })
+                        json.dumps(
+                            {
+                                "type": "unknown_message",
+                                "received_type": str(msg_type),
+                            }
+                        )
                     )
 
     except WebSocketDisconnect:

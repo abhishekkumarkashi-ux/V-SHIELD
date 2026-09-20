@@ -242,8 +242,19 @@ def test_websocket_telemetry_mfa_status_broadcast():
     Verifies that WebSocket /ws/live-call broadcasts mfa_status correctly
     (starts as DISPATCHED on high-risk, then transitions to COOLDOWN on subsequent hops).
     """
+    import json
+
+    from app.core.auth import get_default_operator_token
+
+    token = get_default_operator_token()
     with patch("app.models.aasist_service.AASISTService.predict", return_value=(None, 0.95)):
-        with client.websocket_connect("/ws/live-call?target_phone=%2B919999988888") as ws:
+        with client.websocket_connect(
+            f"/ws/live-call?target_phone=%2B919999988888&token={token}"
+        ) as ws:
+            # Start active session
+            ws.send_text(json.dumps({"type": "start", "target_phone": "+919999988888"}))
+            _ = ws.receive_json()
+
             # Generate 64,600 samples of active 440 Hz audio to satisfy VAD energy threshold
             t = np.linspace(0, 4.0375, 64600, endpoint=False)
             audio = (0.5 * np.sin(2 * np.pi * 440.0 * t) * 32767).astype(np.int16)
