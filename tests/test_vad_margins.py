@@ -70,3 +70,63 @@ def test_vad_continuous_speech():
     is_active, ratio, _ = vad.process_window(noise)
     assert is_active
     assert ratio > 0.90
+
+
+def test_vad_discrimination_silence_speech_noise():
+    """
+    Phase 6 Requirement:
+    Verifies that VAD strictly distinguishes:
+    1. Silence
+    2. Normal speech
+    3. Loud speech
+    4. Ambient background noise
+    """
+    vad = MarginPreservingVAD(sample_rate=16000, energy_threshold=0.005)
+    t = np.linspace(0, 1.0, 16000, endpoint=False, dtype=np.float32)
+
+    # 1. Silence
+    silence = np.zeros(16000, dtype=np.float32)
+    diag_silence = vad.analyze_speech(silence)
+    assert diag_silence["state"] == "SILENCE"
+    assert not diag_silence["is_speech_active"]
+    assert diag_silence["speech_ratio"] == 0.0
+
+    # 2. Normal speech (RMS ~ 0.14 > 0.005)
+    normal_speech = (0.2 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    diag_normal = vad.analyze_speech(normal_speech)
+    assert diag_normal["state"] == "SPEECH"
+    assert diag_normal["is_speech_active"]
+    assert diag_normal["speech_ratio"] > 0.5
+    assert diag_normal["mean_frame_rms"] > 0.05
+
+    # 3. Loud speech (RMS ~ 0.56 > 0.005)
+    loud_speech = (0.8 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+    diag_loud = vad.analyze_speech(loud_speech)
+    assert diag_loud["state"] == "SPEECH"
+    assert diag_loud["is_speech_active"]
+    assert diag_loud["speech_ratio"] > 0.5
+    assert diag_loud["mean_frame_rms"] > 0.2
+
+    # 4. Background noise (RMS ~ 0.001 < 0.005 threshold)
+    np.random.seed(42)
+    bg_noise = np.random.uniform(-0.002, 0.002, 16000).astype(np.float32)
+    diag_noise = vad.analyze_speech(bg_noise)
+    assert diag_noise["state"] == "SILENCE"
+    assert not diag_noise["is_speech_active"]
+    assert diag_noise["active_frames_count"] == 0
+
+
+def test_vad_transient_click_rejection():
+    """Verify that transient acoustic clicks (< 50ms) do not trigger false positive speech."""
+    vad = MarginPreservingVAD(sample_rate=16000, energy_threshold=0.005, min_speech_duration_ms=50)
+
+    # 1 second of audio with a 15ms (240 samples) loud transient click in the middle
+    audio = np.zeros(16000, dtype=np.float32)
+    click_start = 8000
+    click_end = click_start + 240
+    audio[click_start:click_end] = 0.9  # very loud click
+
+    diag = vad.analyze_speech(audio)
+    assert diag["state"] == "SILENCE"
+    assert not diag["is_speech_active"]
+
