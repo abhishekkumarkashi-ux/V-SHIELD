@@ -10,6 +10,7 @@ import {
   Wifi,
   WifiOff,
   UploadCloud,
+  AlertTriangle,
 } from 'lucide-react';
 
 import { useVShieldSocket } from './hooks/useVShieldSocket';
@@ -19,6 +20,7 @@ import { AudioWaveform } from './components/AudioWaveform';
 import { TelemetryBreakdown } from './components/TelemetryBreakdown';
 import { MitigationAlert } from './components/MitigationAlert';
 import { FileUploadAnalyzer } from './components/FileUploadAnalyzer';
+import { fetchHealth, fetchSpeakers, SystemHealth } from './services/api';
 
 interface SpeakerOption {
   speaker_id: string;
@@ -34,6 +36,10 @@ export const App: React.FC = () => {
     { speaker_id: 'exec-003', name: 'Vikram Malhotra (Treasury Controller)' },
   ]);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [backendHealth, setBackendHealth] = useState<SystemHealth | null>(null);
+  const [backendStatus, setBackendStatus] = useState<
+    'CHECKING' | 'ONLINE' | 'MODEL_ERROR' | 'DEGRADED' | 'OFFLINE'
+  >('CHECKING');
 
   // WebSocket Telemetry Hook
   const {
@@ -63,14 +69,41 @@ export const App: React.FC = () => {
     onAudioChunk: sendAudioChunk,
   });
 
-  // Fetch registered speakers from backend
+  // Health Polling & Speaker Loading
   useEffect(() => {
-    fetch('http://localhost:8000/api/speakers')
-      .then((res) => (res.ok ? res.json() : []))
+    let isMounted = true;
+
+    const checkHealth = async () => {
+      try {
+        const health = await fetchHealth();
+        if (!isMounted) return;
+        setBackendHealth(health);
+        if (health.model_loaded && (health.status === 'ok' || health.status === 'ONLINE')) {
+          setBackendStatus('ONLINE');
+        } else if (!health.model_loaded) {
+          setBackendStatus('MODEL_ERROR');
+        } else if (health.status === 'degraded') {
+          setBackendStatus('DEGRADED');
+        } else {
+          setBackendStatus('ONLINE');
+        }
+      } catch {
+        if (!isMounted) return;
+        setBackendHealth(null);
+        setBackendStatus('OFFLINE');
+      }
+    };
+
+    // Initial check and 5s polling
+    checkHealth();
+    const interval = setInterval(checkHealth, 5000);
+
+    // Fetch registered speakers from backend
+    fetchSpeakers()
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (isMounted && Array.isArray(data) && data.length > 0) {
           setSpeakersList(
-            data.map((s: { speaker_id: string; name?: string }) => ({
+            data.map((s) => ({
               speaker_id: s.speaker_id,
               name: s.name || s.speaker_id,
             }))
@@ -78,8 +111,13 @@ export const App: React.FC = () => {
         }
       })
       .catch(() => {
-        // Default list fallback
+        // Fallback default profiles
       });
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleStartCall = async () => {
@@ -144,22 +182,79 @@ export const App: React.FC = () => {
         {/* System Telemetry & Status Badges */}
         <div className="flex items-center space-x-4">
           <div className="hidden sm:flex items-center space-x-2 text-xs font-mono bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-slate-300">AASIST (Graph Attn)</span>
-            <span className="text-slate-600">|</span>
-            <span className="text-slate-300">ECAPA-TDNN</span>
+            {backendStatus === 'ONLINE' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="text-slate-300">{backendHealth?.anti_spoof_model || 'AASIST (Graph Attn)'}</span>
+                <span className="text-slate-600">|</span>
+                <span className="text-slate-300">ECAPA-TDNN ({backendHealth?.device?.toUpperCase() || 'CPU'})</span>
+              </>
+            ) : backendStatus === 'MODEL_ERROR' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                <span className="text-red-400 font-semibold">MODEL LOAD ERROR</span>
+              </>
+            ) : backendStatus === 'DEGRADED' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                <span className="text-amber-300 font-semibold">DEGRADED (PARTIAL AI)</span>
+              </>
+            ) : backendStatus === 'CHECKING' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-slate-400 animate-ping"></span>
+                <span className="text-slate-400">CONNECTING...</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-slate-600"></span>
+                <span className="text-slate-500">BACKEND OFFLINE</span>
+              </>
+            )}
           </div>
 
-          <div className="flex items-center space-x-1.5 text-xs font-mono px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
-            {isConnected ? (
+          <div
+            className={`flex items-center space-x-1.5 text-xs font-mono px-3 py-1.5 rounded-lg border transition-colors ${
+              backendStatus === 'ONLINE'
+                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-400'
+                : backendStatus === 'MODEL_ERROR'
+                ? 'bg-red-950/60 border-red-500/40 text-red-400'
+                : backendStatus === 'DEGRADED'
+                ? 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+                : backendStatus === 'CHECKING'
+                ? 'bg-slate-900 border-slate-700 text-slate-400'
+                : 'bg-slate-900 border-slate-800 text-slate-500'
+            }`}
+          >
+            {backendStatus === 'ONLINE' ? (
               <>
                 <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400 font-semibold">GATEWAY CONNECTED</span>
+                <span className="font-semibold">ONLINE</span>
+                {isConnected && (
+                  <>
+                    <span className="text-emerald-600 font-bold">•</span>
+                    <span className="text-cyan-400 font-semibold text-[10px]">STREAMING</span>
+                  </>
+                )}
+              </>
+            ) : backendStatus === 'MODEL_ERROR' ? (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                <span className="font-semibold">MODEL ERROR</span>
+              </>
+            ) : backendStatus === 'DEGRADED' ? (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-semibold">DEGRADED</span>
+              </>
+            ) : backendStatus === 'CHECKING' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-slate-400 animate-ping mr-1"></span>
+                <span className="font-medium">CHECKING...</span>
               </>
             ) : (
               <>
                 <WifiOff className="w-3.5 h-3.5 text-slate-500" />
-                <span className="text-slate-500">OFFLINE</span>
+                <span>OFFLINE</span>
               </>
             )}
           </div>
