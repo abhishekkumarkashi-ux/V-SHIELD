@@ -6,7 +6,8 @@ Provides predict_spoof_prob() with automatic PyTorch fallback.
 
 import os
 import urllib.request
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -27,46 +28,88 @@ from app.models.aasist import Model as AASISTModel
 OFFICIAL_AASIST_WEIGHTS_URL = "https://github.com/clovaai/aasist/raw/main/models/weights/AASIST.pth"
 
 
-class AASISTService:
+class _LoadStatus(int):
     """
-    Singleton service managing AASIST inference via ONNX Runtime (FP16/CUDA/CPU)
-    with seamless PyTorch fallback.
+    Hybrid int/bool supporting both boolean evaluation and zero-argument invocation:
+    - bool(status) -> True/False
+    - status() -> True/False
+    - if status: -> evaluates as boolean
     """
 
-    _instance: Optional["AASISTService"] = None
+    def __call__(self) -> bool:
+        return bool(self)
+
+
+class AASISTModelAdapter:
+    """
+    Production AASIST Model Adapter conforming to V-SHIELD unified ML architecture.
+    Provides dual-runtime inference (FP16 ONNX Runtime with PyTorch native fallback).
+
+    Clean Adapter Interface:
+      - load() -> bool
+      - predict(audio) -> Tuple[torch.Tensor, float]
+      - is_loaded() -> bool
+    """
 
     def __init__(
         self,
-        weights_path: Optional[str] = None,
-        onnx_path: Optional[str] = None,
+        weights_path: Optional[Union[str, Path]] = None,
+        onnx_path: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.weights_path = weights_path or str(settings.AASIST_WEIGHTS_PATH)
-        self.onnx_path = onnx_path or str(settings.AASIST_ONNX_PATH)
+
+        # Prioritize explicit environment variable VSHIELD_ANTISPOOF_MODEL_PATH
+        env_path = getattr(settings, "VSHIELD_ANTISPOOF_MODEL_PATH", None)
+        if env_path:
+            p = Path(env_path)
+            if p.suffix.lower() == ".onnx":
+                onnx_path = str(p)
+            elif p.suffix.lower() in (".pth", ".pt"):
+                weights_path = str(p)
+
+        self.weights_path = str(weights_path or settings.AASIST_WEIGHTS_PATH)
+        self.onnx_path = str(onnx_path or settings.AASIST_ONNX_PATH)
         self.model: Optional[AASISTModel] = None
         self.ort_session: Optional["ort.InferenceSession"] = None
-        self.is_onnx_loaded: bool = False
-        self.is_loaded: bool = False
+        self._is_onnx_loaded: bool = False
+        self._is_loaded: bool = False
         self.load_error: Optional[str] = None
 
+        self.load()
+
+    def load(self) -> bool:
+        """
+        Loads AASIST model weights. First attempts ONNX Runtime FP16 acceleration;
+        if unavailable, initializes native PyTorch AASIST graph neural network.
+        Returns True if at least one runtime engine is active.
+        """
         self._initialize_onnx()
         self._initialize_model()
+        return self.is_loaded()
 
-    @classmethod
-    def get_instance(cls) -> "AASISTService":
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+    def is_loaded(self) -> _LoadStatus:
+        """Returns True if either ONNX or PyTorch AASIST engine is loaded and ready."""
+        return _LoadStatus(1 if (self._is_onnx_loaded or self._is_loaded) else 0)
+
+    @property
+    def is_onnx_loaded(self) -> _LoadStatus:
+        return _LoadStatus(1 if self._is_onnx_loaded else 0)
+
+    @is_onnx_loaded.setter
+    def is_onnx_loaded(self, value: bool) -> None:
+        self._is_onnx_loaded = bool(value)
+
+    @property
+    def is_pytorch_loaded(self) -> _LoadStatus:
+        return _LoadStatus(1 if self._is_loaded else 0)
 
     def _initialize_onnx(self) -> None:
         """Initializes ONNX Runtime session with CUDA and CPU providers."""
         if not HAS_ORT or not os.path.exists(self.onnx_path):
             self.load_error = f"ONNX model file not found at {self.onnx_path}"
-            print(
-                f"[AASISTService] {self.load_error}. Using PyTorch fallback."
-            )
-            self.is_onnx_loaded = False
+            print(f"[AASISTAdapter] {self.load_error}. Using PyTorch fallback.")
+            self._is_onnx_loaded = False
             return
 
         try:
@@ -77,20 +120,21 @@ class AASISTService:
             providers.append("CPUExecutionProvider")
 
             print(
-                f"[AASISTService] Loading ONNX model from {self.onnx_path} with providers: {providers}"
+                f"[AASISTAdapter] Loading ONNX model from {self.onnx_path} with providers: {providers}"
             )
             self.ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
-            self.is_onnx_loaded = True
+            self._is_onnx_loaded = True
             print(
-                f"[AASISTService] ONNX Runtime session active using: {self.ort_session.get_providers()[0]}"
+                f"[AASISTAdapter] ONNX Runtime session active using: {self.ort_session.get_providers()[0]}"
             )
         except Exception as err:
             import traceback
+
             self.load_error = f"ONNX session initialization failed: {err}"
             print(
-                f"[AASISTService] ONNX initialization failed: {err}\n{traceback.format_exc()}. Falling back to PyTorch."
+                f"[AASISTAdapter] ONNX initialization failed: {err}\n{traceback.format_exc()}. Falling back to PyTorch."
             )
-            self.is_onnx_loaded = False
+            self._is_onnx_loaded = False
 
     def _ensure_weights(self) -> str:
         """Verifies checkpoint exists, otherwise downloads from official repo."""
@@ -99,7 +143,7 @@ class AASISTService:
             return self.weights_path
 
         print(
-            f"[AASISTService] Weights not found at {self.weights_path}. Downloading from official source..."
+            f"[AASISTAdapter] Weights not found at {self.weights_path}. Downloading from official source..."
         )
         try:
             req = urllib.request.Request(
@@ -107,10 +151,10 @@ class AASISTService:
             )
             with urllib.request.urlopen(req) as response, open(self.weights_path, "wb") as out_file:
                 out_file.write(response.read())
-            print(f"[AASISTService] AASIST.pth successfully downloaded to {self.weights_path}")
+            print(f"[AASISTAdapter] AASIST.pth successfully downloaded to {self.weights_path}")
         except Exception as exc:
             print(
-                f"[AASISTService] Warning: Could not download weights from web ({exc})."
+                f"[AASISTAdapter] Warning: Could not download weights from web ({exc})."
             )
         return self.weights_path
 
@@ -123,21 +167,24 @@ class AASISTService:
             if os.path.exists(ckpt_path) and os.path.getsize(ckpt_path) > 100000:
                 state_dict = torch.load(ckpt_path, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(state_dict, strict=False)
-                print(f"[AASISTService] Loaded PyTorch weights from {ckpt_path} on {self.device}")
+                print(f"[AASISTAdapter] Loaded PyTorch weights from {ckpt_path} on {self.device}")
                 self.model.to(self.device)
                 self.model.eval()
-                self.is_loaded = True
+                self._is_loaded = True
             else:
-                if not self.is_onnx_loaded:
+                if not self._is_onnx_loaded:
                     self.load_error = f"AASIST checkpoint missing or invalid at {ckpt_path}"
-                    print(f"[AASISTService] Error: {self.load_error}")
-                self.is_loaded = False
+                    print(f"[AASISTAdapter] Error: {self.load_error}")
+                self._is_loaded = False
         except Exception as err:
             import traceback
-            if not self.is_onnx_loaded:
+
+            if not self._is_onnx_loaded:
                 self.load_error = f"PyTorch AASIST initialization failed: {err}"
-            print(f"[AASISTService] Error during PyTorch model initialization: {err}\n{traceback.format_exc()}")
-            self.is_loaded = False
+            print(
+                f"[AASISTAdapter] Error during PyTorch model initialization: {err}\n{traceback.format_exc()}"
+            )
+            self._is_loaded = False
 
     def predict_spoof_prob(self, audio_np: np.ndarray) -> float:
         """
@@ -156,30 +203,36 @@ class AASISTService:
         elif cur_len > target_len:
             arr = arr[:, :target_len]
 
-        if self.is_onnx_loaded and self.ort_session is not None:
+        if self._is_onnx_loaded and self.ort_session is not None:
             try:
                 logits = self.ort_session.run(["logits"], {"audio_input": arr})[0]
                 exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
                 probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
                 return float(probs[0, 1])
             except Exception as e:
-                print(f"[AASISTService] ONNX execution error ({e}). Using PyTorch fallback.")
+                print(f"[AASISTAdapter] ONNX execution error ({e}). Using PyTorch fallback.")
 
         # PyTorch fallback
         tensor = torch.from_numpy(arr)
         _, spoof_prob = self.predict(tensor)
         return spoof_prob
 
-    def predict(self, audio_tensor: torch.Tensor) -> Tuple[torch.Tensor, float]:
+    def predict(
+        self, audio: Union[np.ndarray, torch.Tensor]
+    ) -> Tuple[torch.Tensor, float]:
         """
-        Inference on audio tensor under torch.no_grad().
+        Unified inference on audio tensor or numpy array under torch.no_grad().
         Routes through ONNX Runtime if available, otherwise PyTorch model.
         Returns:
             logits (torch.Tensor): [bona_fide_score, spoof_score]
             spoof_probability (float): Softmax(logits)[1]
         """
+        if isinstance(audio, np.ndarray):
+            x = torch.from_numpy(audio.astype(np.float32))
+        else:
+            x = audio.detach()
+
         # Format input tensor to exactly (1, 64600)
-        x = audio_tensor.detach()
         if x.dim() == 1:
             x = x.unsqueeze(0)
         elif x.dim() == 3:
@@ -194,7 +247,7 @@ class AASISTService:
             x = x[:, :target_len]
 
         # 1. Try ONNX Runtime fast path
-        if self.is_onnx_loaded and self.ort_session is not None:
+        if self._is_onnx_loaded and self.ort_session is not None:
             try:
                 arr = x.cpu().numpy().astype(np.float32)
                 ort_logits = self.ort_session.run(["logits"], {"audio_input": arr})[0]
@@ -204,12 +257,17 @@ class AASISTService:
                 return torch.from_numpy(ort_logits), spoof_prob
             except Exception as e:
                 print(
-                    f"[AASISTService] ONNX Runtime error during predict ({e}). Falling back to PyTorch."
+                    f"[AASISTAdapter] ONNX Runtime error during predict ({e}). Falling back to PyTorch."
                 )
 
         # 2. PyTorch Native Fallback
-        if not self.is_loaded or self.model is None:
+        if not self._is_loaded or self.model is None:
             self._initialize_model()
+
+        if self.model is None or not self._is_loaded:
+            raise RuntimeError(
+                f"AASIST model failed to infer: neither ONNX nor PyTorch engine is loaded (load_error={self.load_error})"
+            )
 
         x = x.to(self.device, dtype=torch.float32)
         with torch.no_grad():
@@ -218,3 +276,26 @@ class AASISTService:
             spoof_prob = float(probs[0, 1].item())
 
         return logits.cpu(), spoof_prob
+
+
+class AASISTService(AASISTModelAdapter):
+    """
+    Singleton service managing AASIST inference via ONNX Runtime (FP16/CUDA/CPU)
+    with seamless PyTorch fallback, conforming to AASISTModelAdapter.
+    """
+
+    _instance: Optional["AASISTService"] = None
+
+    @classmethod
+    def get_instance(cls) -> "AASISTService":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @property
+    def is_loaded(self) -> _LoadStatus:
+        return _LoadStatus(1 if (self._is_loaded or self._is_onnx_loaded) else 0)
+
+    @is_loaded.setter
+    def is_loaded(self, value: bool) -> None:
+        self._is_loaded = bool(value)

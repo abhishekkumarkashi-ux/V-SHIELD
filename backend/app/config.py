@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Model Weights & Storage Paths
     BASE_DIR: Path = Path(__file__).resolve().parent
     WEIGHTS_DIR: Path = BASE_DIR / "weights"
+    VSHIELD_ANTISPOOF_MODEL_PATH: Optional[Path] = None
     AASIST_WEIGHTS_PATH: Path = WEIGHTS_DIR / "AASIST.pth"
     AASIST_ONNX_PATH: Path = WEIGHTS_DIR / "aasist_fp16.onnx"
     ECAPA_ONNX_PATH: Path = WEIGHTS_DIR / "ecapa_fp16.onnx"
