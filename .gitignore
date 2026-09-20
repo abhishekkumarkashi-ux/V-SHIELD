@@ -31,3 +31,52 @@ htmlcov/
 backend/app/weights/*.onnx.data
 backend/app/speechbrain_model/
 
+# ============================================================
+# V-SHIELD / LOCAL DEVELOPMENT
+# ============================================================
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+venv/
+.venv/
+ml/venv/
+backend/venv/
+
+# Node dependencies
+node_modules/
+
+# Frontend build output
+dist/
+build/
+
+# ML datasets
+ml/data/raw/
+ml/data/processed/
+datasets/
+data/raw/
+data/processed/
+
+# ML model checkpoints / weights
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# ML experiment outputs
+ml/logs/
+ml/runs/
+ml/checkpoints/
+checkpoints/
+
+# General logs
+*.log
+logs/
+
+# Local model caches
+.cache/
+huggingface/
