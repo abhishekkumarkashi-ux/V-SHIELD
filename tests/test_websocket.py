@@ -73,3 +73,26 @@ def test_websocket_switch_speaker():
         resp = json.loads(ws.receive_text())
         assert resp["type"] == "speaker_switched"
         assert resp["speaker_id"] == "exec-002"
+
+
+def test_websocket_float32_pcm_streaming():
+    """Verify raw 16kHz Float32 PCM streaming over WebSocket produces telemetry packets."""
+    import numpy as np
+
+    with client.websocket_connect("/ws/live-call") as ws:
+        # Start session with float32 format
+        ws.send_text(json.dumps({"type": "start", "speaker_id": "exec-001", "format": "float32"}))
+        started = json.loads(ws.receive_text())
+        assert started["type"] == "session_started"
+        assert started["format"] == "float32"
+
+        # Send 64,600 samples of 16kHz Float32 audio (4.0375s) to prime buffer
+        t = np.linspace(0, 4.0375, 64600, endpoint=False, dtype=np.float32)
+        f32_audio = (0.4 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        ws.send_bytes(f32_audio.tobytes())
+
+        telemetry = json.loads(ws.receive_text())
+        assert telemetry["type"] == "analysis"
+        assert "risk_score" in telemetry
+        assert "metrics" in telemetry
+        assert telemetry["metrics"]["buffer_energy_rms"] > 0.0

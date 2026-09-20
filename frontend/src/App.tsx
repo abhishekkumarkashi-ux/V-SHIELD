@@ -71,6 +71,7 @@ export const App: React.FC = () => {
     isStreaming,
     isMuted,
     rmsVolume,
+    debugInfo,
     startStreaming,
     stopStreaming,
     toggleMute,
@@ -368,6 +369,20 @@ export const App: React.FC = () => {
                   <Square className="w-3.5 h-3.5 fill-current" />
                   <span>End Call</span>
                 </button>
+              </div>
+            )}
+
+            {/* Live Audio Ingestion Diagnostics */}
+            {isStreaming && debugInfo && (
+              <div className="hidden lg:flex items-center space-x-2 text-[10px] font-mono text-cyan-400/90 bg-cyan-950/40 border border-cyan-800/40 rounded-xl px-3 py-1.5 shadow-inner">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-semibold text-slate-200">16kHz Float32 PCM</span>
+                <span className="text-slate-600">|</span>
+                <span>{debugInfo.isWorklet ? 'Worklet' : 'Processor'}</span>
+                <span className="text-slate-600">|</span>
+                <span>In: {debugInfo.inputSampleRate}Hz</span>
+                <span className="text-slate-600">|</span>
+                <span>Chunk: {debugInfo.chunkSamples}smp ({debugInfo.chunkDurationMs}ms)</span>
               </div>
             )}
           </div>

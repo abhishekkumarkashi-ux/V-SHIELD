@@ -98,3 +98,41 @@ def test_narrowband_8khz_upsampling():
     buf.append_pcm16_bytes(int16_8k.tobytes(), input_sample_rate=8000)
 
     assert buf.total_samples == 8000
+
+
+def test_buffer_float32_ingestion():
+    """Verifies that raw Float32 PCM byte chunks are ingested correctly."""
+    buf = AudioCircularBuffer(capacity=64600, hop_size=8000, target_sample_rate=16000)
+
+    raw_float32 = np.random.uniform(-0.8, 0.8, size=16000).astype(np.float32)
+    f32_bytes = raw_float32.tobytes()
+
+    buf.append_float32_bytes(f32_bytes)
+    assert buf.total_samples == 16000
+    assert buf.get_current_rms() > 0.0
+
+
+def test_buffer_auto_detection_float32_and_pcm16():
+    """Verifies auto-detection of Float32 PCM vs PCM16 byte streams."""
+    buf = AudioCircularBuffer(capacity=64600, hop_size=8000, target_sample_rate=16000)
+
+    # Ingest Float32 chunk
+    f32_data = (np.sin(np.linspace(0, 10, 2048)) * 0.5).astype(np.float32)
+    buf.append_audio_bytes(f32_data.tobytes())
+    assert buf.total_samples == 2048
+
+    # Ingest PCM16 chunk
+    i16_data = (np.sin(np.linspace(0, 10, 2048)) * 16000).astype(np.int16)
+    buf.append_audio_bytes(i16_data.tobytes())
+    assert buf.total_samples == 4096
+
+
+def test_buffer_float32_non_finite_handling():
+    """Verifies that NaNs and Infinities in Float32 PCM are sanitized safely."""
+    buf = AudioCircularBuffer(capacity=64600, hop_size=8000, target_sample_rate=16000)
+
+    dirty_float32 = np.array([0.5, np.nan, 0.2, np.inf, -np.inf, -0.4], dtype=np.float32)
+    buf.append_float32_bytes(dirty_float32.tobytes())
+
+    assert buf.total_samples == 6
+    assert np.all(np.isfinite(buf._buffer))

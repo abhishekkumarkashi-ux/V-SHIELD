@@ -234,6 +234,7 @@ async def websocket_live_call(
 
     active_speaker_id = speaker_id
     active_target_phone = target_phone or settings.DEFAULT_MFA_TARGET_PHONE
+    active_audio_format = None
     session_active = False
 
     try:
@@ -252,7 +253,11 @@ async def websocket_live_call(
                     session_active = True
 
                 try:
-                    buffer.append_pcm16_bytes(raw_chunk, input_sample_rate=sample_rate)
+                    buffer.append_audio_bytes(
+                        raw_chunk,
+                        input_sample_rate=sample_rate,
+                        audio_format=active_audio_format,
+                    )
                 except Exception as buf_err:
                     await websocket.send_text(
                         json.dumps({
@@ -358,6 +363,8 @@ async def websocket_live_call(
                         active_speaker_id = payload["speaker_id"]
                     if "target_phone" in payload:
                         active_target_phone = payload["target_phone"]
+                    if "format" in payload:
+                        active_audio_format = payload["format"]
                     buffer.reset()
                     risk_engine.reset()
                     await websocket.send_text(
@@ -365,6 +372,7 @@ async def websocket_live_call(
                             "type": "session_started",
                             "session_id": session_id,
                             "speaker_id": active_speaker_id,
+                            "format": active_audio_format or "auto",
                             "sample_rate": sample_rate,
                         })
                     )

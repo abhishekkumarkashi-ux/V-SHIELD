@@ -43,6 +43,76 @@ class AudioCircularBuffer:
             self._total_samples_written = 0
             self._is_primed = False
 
+    def append_float32_bytes(
+        self, float32_bytes: bytes, input_sample_rate: Optional[int] = None
+    ) -> None:
+        """
+        Ingests raw little-endian Float32 PCM bytes, validates finite values,
+        resamples if input_sample_rate != target_sample_rate, and writes to buffer.
+        """
+        if not float32_bytes:
+            return
+
+        # Ensure complete 32-bit (4-byte) frames
+        valid_len = (len(float32_bytes) // 4) * 4
+        if valid_len == 0:
+            return
+
+        float_data = np.frombuffer(float32_bytes[:valid_len], dtype=np.float32).copy()
+
+        # Sanitize non-finite values (NaN / Inf)
+        if not np.all(np.isfinite(float_data)):
+            float_data = np.nan_to_num(float_data, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        # Narrowband Telephony Handling: Resample if not target sample rate
+        rate = input_sample_rate or self.target_sample_rate
+        if rate == 8000:
+            float_data = signal.resample_poly(float_data, up=2, down=1).astype(np.float32)
+        elif rate != self.target_sample_rate:
+            from math import gcd
+
+            common = gcd(rate, self.target_sample_rate)
+            up = self.target_sample_rate // common
+            down = rate // common
+            float_data = signal.resample_poly(float_data, up=up, down=down).astype(np.float32)
+
+        self.append_samples(float_data)
+
+    def append_audio_bytes(
+        self,
+        raw_bytes: bytes,
+        input_sample_rate: Optional[int] = None,
+        audio_format: Optional[str] = None,
+    ) -> None:
+        """
+        Flexible audio ingestion supporting both 16kHz Float32 PCM and legacy PCM16.
+        Automatically detects format if unspecified.
+        """
+        if not raw_bytes:
+            return
+
+        if audio_format == "pcm16":
+            self.append_pcm16_bytes(raw_bytes, input_sample_rate=input_sample_rate)
+            return
+
+        if audio_format == "float32":
+            self.append_float32_bytes(raw_bytes, input_sample_rate=input_sample_rate)
+            return
+
+        # Auto-detect Float32 PCM vs PCM16:
+        # A valid Float32 stream has length divisible by 4, all finite numbers,
+        # and normal audio amplitudes bounded roughly within [-2.0, 2.0].
+        if len(raw_bytes) >= 4 and len(raw_bytes) % 4 == 0:
+            candidate = np.frombuffer(raw_bytes, dtype=np.float32)
+            if np.all(np.isfinite(candidate)):
+                max_amp = np.max(np.abs(candidate)) if len(candidate) > 0 else 0.0
+                if max_amp <= 2.0:
+                    self.append_float32_bytes(raw_bytes, input_sample_rate=input_sample_rate)
+                    return
+
+        # Fallback to PCM16
+        self.append_pcm16_bytes(raw_bytes, input_sample_rate=input_sample_rate)
+
     def append_pcm16_bytes(self, pcm_bytes: bytes, input_sample_rate: Optional[int] = None) -> None:
         """
         Ingests raw little-endian PCM16 bytes, normalizes to [-1.0, 1.0] float32,
