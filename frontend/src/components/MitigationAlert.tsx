@@ -2,8 +2,9 @@ import React from 'react';
 import { PhoneCall, ShieldAlert, KeyRound, AlertOctagon, CheckCircle2, PhoneOff } from 'lucide-react';
 
 interface MitigationAlertProps {
-  action: string;
-  riskScore: number;
+  action: string | null;
+  riskScore: number | null;
+  isStreaming?: boolean;
   onTriggerMfa?: () => void;
   onTerminateCall?: () => void;
   onOverride?: () => void;
@@ -12,10 +13,36 @@ interface MitigationAlertProps {
 export const MitigationAlert: React.FC<MitigationAlertProps> = ({
   action,
   riskScore,
+  isStreaming = false,
   onTriggerMfa,
   onTerminateCall,
   onOverride,
 }) => {
+  if (!isStreaming || riskScore === null || action === null || action === 'WAITING' || action === 'STANDBY') {
+    return (
+      <div className="w-full rounded-xl bg-slate-900/40 border border-slate-800/80 p-3.5 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="p-2 bg-slate-800/80 rounded-lg text-slate-400">
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+              Layer 5 Decision: {isStreaming ? 'Ingesting Audio Stream' : 'Gateway Standby'}
+            </h4>
+            <p className="text-[11px] text-slate-400">
+              {isStreaming
+                ? 'Sliding window accumulating 64,600 samples for inference...'
+                : 'Connect live microphone or trigger simulated call stream to initiate real-time telemetry.'}
+            </p>
+          </div>
+        </div>
+        <span className="text-[11px] font-mono text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-full border border-slate-700/50">
+          {isStreaming ? 'BUFFERING' : 'IDLE'}
+        </span>
+      </div>
+    );
+  }
+
   if (action === 'ALLOW_CALL' || action === 'MONITOR') {
     return (
       <div className="w-full rounded-xl bg-emerald-950/40 border border-emerald-500/30 p-4 flex items-center justify-between">

@@ -2,22 +2,32 @@ import React from 'react';
 import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
 
 interface RiskGaugeProps {
-  score: number; // 0 to 100
-  classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'INSUFFICIENT_DATA';
+  score: number | null; // 0 to 100, or null when awaiting inference
+  classification:
+    | 'LOW_RISK'
+    | 'MEDIUM_RISK'
+    | 'HIGH_RISK'
+    | 'INSUFFICIENT_DATA'
+    | 'WAITING'
+    | 'LISTENING'
+    | 'ANALYZING'
+    | string;
+  isStreaming?: boolean;
 }
 
-export const RiskGauge: React.FC<RiskGaugeProps> = ({ score, classification }) => {
-  // Clamp score
-  const clampedScore = Math.max(0, Math.min(100, score));
+export const RiskGauge: React.FC<RiskGaugeProps> = ({ score, classification, isStreaming = false }) => {
+  const hasScore = score !== null && score !== undefined;
+  const clampedScore = hasScore ? Math.max(0, Math.min(100, score)) : 0;
 
   // Gauge angles: -90 deg (left, score 0) to +90 deg (right, score 100)
-  // Total arc = 180 degrees
-  const angle = -90 + (clampedScore / 100) * 180;
+  const angle = hasScore ? -90 + (clampedScore / 100) * 180 : -90;
 
   // Arc stroke dasharray calculation (semi-circle radius = 80, length = PI * 80 ~= 251.32)
   const radius = 80;
   const circumference = Math.PI * radius;
-  const strokeDashoffset = circumference - (clampedScore / 100) * circumference;
+  const strokeDashoffset = hasScore
+    ? circumference - (clampedScore / 100) * circumference
+    : circumference;
 
   let themeColor = '#10b981'; // Emerald
   let glowColor = 'rgba(16, 185, 129, 0.4)';
@@ -25,11 +35,31 @@ export const RiskGauge: React.FC<RiskGaugeProps> = ({ score, classification }) =
   let statusText = 'VERIFIED GENUINE';
   let Icon = ShieldCheck;
 
-  if (classification === 'INSUFFICIENT_DATA') {
+  if (!hasScore) {
+    if (isStreaming || classification === 'ANALYZING') {
+      themeColor = '#06b6d4'; // Cyan
+      glowColor = 'rgba(6, 182, 212, 0.35)';
+      bgBadge = 'bg-cyan-950/80 border-cyan-500/40 text-cyan-300';
+      statusText = 'ANALYZING AUDIO';
+      Icon = AlertTriangle;
+    } else if (classification === 'LISTENING') {
+      themeColor = '#06b6d4';
+      glowColor = 'rgba(6, 182, 212, 0.35)';
+      bgBadge = 'bg-cyan-950/80 border-cyan-500/40 text-cyan-300';
+      statusText = 'LISTENING (BUFFERING)';
+      Icon = ShieldCheck;
+    } else {
+      themeColor = '#64748b'; // Slate
+      glowColor = 'rgba(100, 116, 139, 0.25)';
+      bgBadge = 'bg-slate-800/80 border-slate-700/50 text-slate-400';
+      statusText = 'WAITING FOR AUDIO';
+      Icon = ShieldCheck;
+    }
+  } else if (classification === 'INSUFFICIENT_DATA') {
     themeColor = '#64748b'; // Slate
     glowColor = 'rgba(100, 116, 139, 0.4)';
     bgBadge = 'bg-slate-800/80 border-slate-600/40 text-slate-300';
-    statusText = 'AWAITING AUDIO';
+    statusText = 'INSUFFICIENT DATA';
     Icon = ShieldCheck;
   } else if (classification === 'HIGH_RISK') {
     themeColor = '#ef4444'; // Crimson
@@ -132,7 +162,7 @@ export const RiskGauge: React.FC<RiskGaugeProps> = ({ score, classification }) =
       <div className="flex flex-col items-center mt-2">
         <div className="flex items-baseline space-x-1">
           <span className="text-4xl font-extrabold font-mono tracking-tight" style={{ color: themeColor }}>
-            {clampedScore.toFixed(1)}
+            {hasScore ? clampedScore.toFixed(1) : '—'}
           </span>
           <span className="text-sm font-semibold text-slate-400">/100</span>
         </div>

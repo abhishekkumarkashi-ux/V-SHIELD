@@ -44,6 +44,8 @@ export const App: React.FC = () => {
   // WebSocket Telemetry Hook
   const {
     latestPacket,
+    serverAudioMetrics,
+    pipelineStatus,
     history,
     lastError,
     connect: connectWs,
@@ -168,9 +170,11 @@ export const App: React.FC = () => {
     setTimeout(() => setAlertMessage(null), 5000);
   };
 
-  const currentRiskScore = latestPacket?.risk_score ?? 0;
-  const currentClassification = latestPacket?.classification ?? 'LOW_RISK';
-  const currentAction = latestPacket?.recommended_action ?? 'ALLOW_CALL';
+  const currentRiskScore = latestPacket?.risk_score ?? null;
+  const currentClassification =
+    latestPacket?.classification ??
+    (isStreaming ? (pipelineStatus === 'ANALYZING' ? 'ANALYZING' : 'LISTENING') : 'WAITING');
+  const currentAction = latestPacket?.recommended_action ?? null;
 
   const currentSpeakerObj = speakersList.find((s) => s.speaker_id === selectedSpeaker);
 
@@ -373,16 +377,34 @@ export const App: React.FC = () => {
             )}
 
             {/* Live Audio Ingestion Diagnostics */}
-            {isStreaming && debugInfo && (
+            {isStreaming && (
               <div className="hidden lg:flex items-center space-x-2 text-[10px] font-mono text-cyan-400/90 bg-cyan-950/40 border border-cyan-800/40 rounded-xl px-3 py-1.5 shadow-inner">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="font-semibold text-slate-200">16kHz Float32 PCM</span>
+                <span className="font-semibold text-slate-200">
+                  {serverAudioMetrics ? `${serverAudioMetrics.sample_rate / 1000}kHz Stream` : '16kHz Audio'}
+                </span>
                 <span className="text-slate-600">|</span>
-                <span>{debugInfo.isWorklet ? 'Worklet' : 'Processor'}</span>
+                <span>
+                  {serverAudioMetrics
+                    ? `RMS: ${serverAudioMetrics.rms.toFixed(4)}`
+                    : rmsVolume > 0
+                    ? `Mic: ${rmsVolume.toFixed(3)}`
+                    : debugInfo
+                    ? `${debugInfo.chunkDurationMs}ms chunks`
+                    : 'Ingesting'}
+                </span>
                 <span className="text-slate-600">|</span>
-                <span>In: {debugInfo.inputSampleRate}Hz</span>
-                <span className="text-slate-600">|</span>
-                <span>Chunk: {debugInfo.chunkSamples}smp ({debugInfo.chunkDurationMs}ms)</span>
+                <span>
+                  {serverAudioMetrics?.speech_state
+                    ? `VAD: ${serverAudioMetrics.speech_state}`
+                    : `State: ${pipelineStatus}`}
+                </span>
+                {serverAudioMetrics && (
+                  <>
+                    <span className="text-slate-600">|</span>
+                    <span>Peak: {serverAudioMetrics.peak.toFixed(3)}</span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -427,6 +449,7 @@ export const App: React.FC = () => {
         <MitigationAlert
           action={currentAction}
           riskScore={currentRiskScore}
+          isStreaming={isStreaming}
           onTriggerMfa={handleTriggerMfa}
           onTerminateCall={handleTerminate}
           onOverride={() => resetCall()}
@@ -444,7 +467,11 @@ export const App: React.FC = () => {
                 <span className="font-mono text-[11px] text-cyan-400">EMA (α = 0.70)</span>
               </div>
 
-              <RiskGauge score={currentRiskScore} classification={currentClassification} />
+              <RiskGauge
+                score={currentRiskScore}
+                classification={currentClassification}
+                isStreaming={isStreaming}
+              />
             </div>
 
             {/* Audio Waveform with 300ms margin preservation guard */}
@@ -470,6 +497,9 @@ export const App: React.FC = () => {
 
               <TelemetryBreakdown
                 metrics={latestPacket?.metrics ?? null}
+                serverAudioMetrics={serverAudioMetrics}
+                pipelineStatus={pipelineStatus}
+                isStreaming={isStreaming}
                 enrolledSpeakerName={currentSpeakerObj?.name}
               />
             </div>
