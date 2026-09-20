@@ -45,8 +45,11 @@ export const App: React.FC = () => {
   const {
     latestPacket,
     history,
+    lastError,
     connect: connectWs,
     disconnect: disconnectWs,
+    startSession,
+    stopSession,
     sendAudioChunk,
     switchSpeaker,
     resetCall,
@@ -54,6 +57,14 @@ export const App: React.FC = () => {
   } = useVShieldSocket({
     speakerId: selectedSpeaker,
   });
+
+  useEffect(() => {
+    if (lastError) {
+      setAlertMessage(`Gateway Notice: ${lastError}`);
+      const timer = setTimeout(() => setAlertMessage(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [lastError]);
 
   // Microphone / Audio Streamer Hook
   const {
@@ -122,6 +133,7 @@ export const App: React.FC = () => {
 
   const handleStartCall = async () => {
     connectWs();
+    startSession();
     try {
       await startStreaming();
     } catch {
@@ -132,6 +144,7 @@ export const App: React.FC = () => {
 
   const handleStopCall = () => {
     stopStreaming();
+    stopSession();
     disconnectWs();
     resetCall();
   };

@@ -39,6 +39,7 @@ export function useVShieldSocket({
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [latestPacket, setLatestPacket] = useState<TelemetryPacket | null>(null);
   const [history, setHistory] = useState<TelemetryPacket[]>([]);
+  const [lastError, setLastError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
@@ -48,6 +49,7 @@ export function useVShieldSocket({
     }
 
     setStatus('connecting');
+    setLastError(null);
     const wsUrl = new URL(url);
     if (speakerId) {
       wsUrl.searchParams.set('speaker_id', speakerId);
@@ -60,15 +62,43 @@ export function useVShieldSocket({
       ws.onopen = () => {
         setStatus('connected');
         console.log('[V-SHIELD WS] Connected to backend telemetry gateway');
+        // Automatically initiate session handshake
+        ws.send(JSON.stringify({ type: 'start', speaker_id: speakerId }));
       };
 
       ws.onmessage = (event) => {
         if (typeof event.data === 'string') {
           try {
-            const packet: TelemetryPacket = JSON.parse(event.data);
-            setLatestPacket(packet);
-            setHistory((prev) => [...prev.slice(-49), packet]);
-            onPacketReceived?.(packet);
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'session_started') {
+              console.log('[V-SHIELD WS] Session started:', data.session_id);
+              setLastError(null);
+              return;
+            }
+            if (data.type === 'session_stopped') {
+              console.log('[V-SHIELD WS] Session stopped:', data.session_id);
+              return;
+            }
+            if (data.type === 'session_reset') {
+              console.log('[V-SHIELD WS] Session reset');
+              setLatestPacket(null);
+              setHistory([]);
+              return;
+            }
+            if (data.type === 'model_error' || data.type === 'audio_error' || data.type === 'protocol_error') {
+              console.warn('[V-SHIELD WS] Error received from gateway:', data);
+              setLastError(data.error || 'Gateway protocol error');
+              return;
+            }
+
+            // Route standard telemetry analysis packets
+            if (typeof data.risk_score === 'number' && data.metrics) {
+              const packet: TelemetryPacket = data;
+              setLatestPacket(packet);
+              setHistory((prev) => [...prev.slice(-49), packet]);
+              onPacketReceived?.(packet);
+            }
           } catch (err) {
             console.error('[V-SHIELD WS] Failed to parse JSON packet:', err);
           }
@@ -91,6 +121,20 @@ export function useVShieldSocket({
     }
   }, [url, speakerId, onPacketReceived]);
 
+  const startSession = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'start', speaker_id: speakerId }));
+    } else {
+      connect();
+    }
+  }, [connect, speakerId]);
+
+  const stopSession = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'stop' }));
+    }
+  }, []);
+
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -110,13 +154,13 @@ export function useVShieldSocket({
 
   const switchSpeaker = useCallback((newSpeakerId: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ speaker_id: newSpeakerId }));
+      wsRef.current.send(JSON.stringify({ type: 'switch_speaker', speaker_id: newSpeakerId }));
     }
   }, []);
 
   const resetCall = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ action: 'reset' }));
+      wsRef.current.send(JSON.stringify({ type: 'reset' }));
     }
     setLatestPacket(null);
     setHistory([]);
@@ -132,8 +176,11 @@ export function useVShieldSocket({
     status,
     latestPacket,
     history,
+    lastError,
     connect,
     disconnect,
+    startSession,
+    stopSession,
     sendAudioChunk,
     switchSpeaker,
     resetCall,
