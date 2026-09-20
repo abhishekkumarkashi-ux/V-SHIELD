@@ -96,3 +96,78 @@ def test_websocket_float32_pcm_streaming():
         assert "risk_score" in telemetry
         assert "metrics" in telemetry
         assert telemetry["metrics"]["buffer_energy_rms"] > 0.0
+
+
+def test_websocket_audio_packet_too_small():
+    """Verify audio packets smaller than 4 bytes return audio_error."""
+    with client.websocket_connect("/ws/live-call") as ws:
+        ws.send_bytes(b"\x00\x01")
+        err_msg = json.loads(ws.receive_text())
+        assert err_msg["type"] == "audio_error"
+        assert "too small" in err_msg["error"]
+
+
+def test_websocket_misaligned_float32_audio():
+    """Verify misaligned Float32 audio chunks return audio_error."""
+    with client.websocket_connect("/ws/live-call") as ws:
+        ws.send_text(json.dumps({"type": "start", "format": "float32"}))
+        _ = json.loads(ws.receive_text())
+
+        ws.send_bytes(b"\x00" * 7)  # 7 is not divisible by 4
+        err_msg = json.loads(ws.receive_text())
+        assert err_msg["type"] == "audio_error"
+        assert "not divisible by 4" in err_msg["error"]
+
+
+def test_websocket_non_finite_float32_audio():
+    """Verify Float32 audio with NaNs or Infs is rejected safely."""
+    import numpy as np
+
+    with client.websocket_connect("/ws/live-call") as ws:
+        ws.send_text(json.dumps({"type": "start", "format": "float32"}))
+        _ = json.loads(ws.receive_text())
+
+        dirty_audio = np.array([0.1, np.nan, 0.5, np.inf], dtype=np.float32)
+        ws.send_bytes(dirty_audio.tobytes())
+
+        err_msg = json.loads(ws.receive_text())
+        assert err_msg["type"] == "audio_error"
+        assert "Non-finite" in err_msg["error"]
+
+
+def test_websocket_out_of_bounds_amplitude_audio():
+    """Verify extreme amplitude audio (> 10.0 peak) is rejected."""
+    import numpy as np
+
+    with client.websocket_connect("/ws/live-call") as ws:
+        ws.send_text(json.dumps({"type": "start", "format": "float32"}))
+        _ = json.loads(ws.receive_text())
+
+        extreme_audio = (np.ones(100, dtype=np.float32) * 50.0).tobytes()
+        ws.send_bytes(extreme_audio)
+
+        err_msg = json.loads(ws.receive_text())
+        assert err_msg["type"] == "audio_error"
+        assert "out of bounds" in err_msg["error"]
+
+
+def test_websocket_audio_metrics_packet_reporting():
+    """Verify unprimed audio chunks emit audio_metrics telemetry for frontend instrumentation."""
+    import numpy as np
+
+    with client.websocket_connect("/ws/live-call") as ws:
+        ws.send_text(json.dumps({"type": "start", "format": "float32"}))
+        _ = json.loads(ws.receive_text())
+
+        # Send 2048 samples (128ms) of 440 Hz audio
+        t = np.linspace(0, 0.128, 2048, endpoint=False, dtype=np.float32)
+        chunk = (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        ws.send_bytes(chunk.tobytes())
+
+        metrics_msg = json.loads(ws.receive_text())
+        assert metrics_msg["type"] == "audio_metrics"
+        assert metrics_msg["sample_rate"] == 16000
+        assert metrics_msg["samples"] == 2048
+        assert metrics_msg["duration_ms"] == 128.0
+        assert metrics_msg["rms"] > 0.1
+        assert metrics_msg["peak"] > 0.2

@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Optional
 
+import numpy as np
 import torch
 from fastapi import (
     FastAPI,
@@ -236,6 +237,7 @@ async def websocket_live_call(
     active_target_phone = target_phone or settings.DEFAULT_MFA_TARGET_PHONE
     active_audio_format = None
     session_active = False
+    last_metrics_report_time = 0.0
 
     try:
         while True:
@@ -249,15 +251,120 @@ async def websocket_live_call(
                     )
                     continue
 
+                if len(raw_chunk) < 4:
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "audio_error",
+                            "error": f"Audio packet too small: expected >= 4 bytes (got {len(raw_chunk)})",
+                        })
+                    )
+                    continue
+
+                # Check frame alignment
+                if active_audio_format == "float32" and len(raw_chunk) % 4 != 0:
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "audio_error",
+                            "error": f"Malformed Float32 audio packet: length {len(raw_chunk)} not divisible by 4",
+                        })
+                    )
+                    continue
+                elif active_audio_format == "pcm16" and len(raw_chunk) % 2 != 0:
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "audio_error",
+                            "error": f"Malformed PCM16 audio packet: length {len(raw_chunk)} not divisible by 2",
+                        })
+                    )
+                    continue
+                elif active_audio_format is None and (
+                    len(raw_chunk) % 4 != 0 and len(raw_chunk) % 2 != 0
+                ):
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "audio_error",
+                            "error": f"Malformed audio packet: length {len(raw_chunk)} not aligned to sample frame size",
+                        })
+                    )
+                    continue
+
+                # Convert to Float32 array and validate numerical properties
+                is_f32 = active_audio_format == "float32" or (
+                    active_audio_format is None and len(raw_chunk) % 4 == 0
+                )
+
+                audio_samples = None
+                if is_f32:
+                    try:
+                        candidate = np.frombuffer(raw_chunk, dtype=np.float32)
+                        if not np.all(np.isfinite(candidate)):
+                            if active_audio_format == "float32":
+                                await websocket.send_text(
+                                    json.dumps({
+                                        "type": "audio_error",
+                                        "error": "Non-finite values (NaN / Inf) detected in Float32 audio stream",
+                                    })
+                                )
+                                continue
+                            else:
+                                is_f32 = False
+                        else:
+                            max_amp = (
+                                float(np.max(np.abs(candidate))) if len(candidate) > 0 else 0.0
+                            )
+                            if max_amp > 10.0:
+                                if active_audio_format == "float32":
+                                    await websocket.send_text(
+                                        json.dumps({
+                                            "type": "audio_error",
+                                            "error": f"Float32 audio amplitude out of bounds (peak: {max_amp:.2f} > 10.0)",
+                                        })
+                                    )
+                                    continue
+                                else:
+                                    is_f32 = False
+                            else:
+                                audio_samples = candidate.copy()
+                    except Exception as parse_err:
+                        if active_audio_format == "float32":
+                            await websocket.send_text(
+                                json.dumps({
+                                    "type": "audio_error",
+                                    "error": f"Failed to parse Float32 audio chunk: {parse_err}",
+                                })
+                            )
+                            continue
+                        is_f32 = False
+
+                if audio_samples is None:
+                    # Ingest as PCM16 fallback
+                    try:
+                        valid_len = (len(raw_chunk) // 2) * 2
+                        int16_arr = np.frombuffer(raw_chunk[:valid_len], dtype=np.int16)
+                        audio_samples = (int16_arr.astype(np.float32) / 32768.0).copy()
+                    except Exception as pcm_err:
+                        await websocket.send_text(
+                            json.dumps({
+                                "type": "audio_error",
+                                "error": f"Failed to parse PCM16 audio chunk: {pcm_err}",
+                            })
+                        )
+                        continue
+
+                # Safety clamp to [-1.0, 1.0]
+                audio_samples = np.clip(audio_samples, -1.0, 1.0)
+
+                # Compute chunk metrics
+                sample_count = len(audio_samples)
+                duration_ms = round((sample_count / sample_rate) * 1000.0, 2)
+                chunk_rms = float(np.sqrt(np.mean(audio_samples**2))) if sample_count > 0 else 0.0
+                chunk_peak = float(np.max(np.abs(audio_samples))) if sample_count > 0 else 0.0
+
                 if not session_active:
                     session_active = True
 
                 try:
-                    buffer.append_audio_bytes(
-                        raw_chunk,
-                        input_sample_rate=sample_rate,
-                        audio_format=active_audio_format,
-                    )
+                    buffer.append_samples(audio_samples)
                 except Exception as buf_err:
                     await websocket.send_text(
                         json.dumps({
@@ -268,7 +375,9 @@ async def websocket_live_call(
                     continue
 
                 # Process all complete hop windows ready in the ring buffer
+                extracted_any = False
                 for window_tensor in buffer.extract_all_ready_windows():
+                    extracted_any = True
                     t_start = time.perf_counter()
 
                     try:
@@ -343,6 +452,25 @@ async def websocket_live_call(
                             })
                         )
 
+                # Instrument and report incoming audio metrics at bounded intervals
+                now = time.time()
+                should_report_metrics = (
+                    not extracted_any
+                    and (last_metrics_report_time == 0.0 or now - last_metrics_report_time >= 0.5)
+                ) or (now - last_metrics_report_time >= 1.0)
+                if should_report_metrics:
+                    last_metrics_report_time = now
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "audio_metrics",
+                            "sample_rate": sample_rate,
+                            "samples": sample_count,
+                            "duration_ms": duration_ms,
+                            "rms": round(chunk_rms, 4),
+                            "peak": round(chunk_peak, 4),
+                        })
+                    )
+
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])
@@ -367,6 +495,7 @@ async def websocket_live_call(
                         active_audio_format = payload["format"]
                     buffer.reset()
                     risk_engine.reset()
+                    last_metrics_report_time = 0.0
                     await websocket.send_text(
                         json.dumps({
                             "type": "session_started",
@@ -381,6 +510,7 @@ async def websocket_live_call(
                     session_active = False
                     buffer.reset()
                     risk_engine.reset()
+                    last_metrics_report_time = 0.0
                     # Do NOT close the WebSocket on normal stop
                     await websocket.send_text(
                         json.dumps({
@@ -393,6 +523,7 @@ async def websocket_live_call(
                 elif msg_type == "reset":
                     buffer.reset()
                     risk_engine.reset()
+                    last_metrics_report_time = 0.0
                     await websocket.send_text(
                         json.dumps({
                             "type": "session_reset",

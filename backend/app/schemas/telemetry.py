@@ -142,3 +142,12 @@ class MfaChallengeResponse(BaseModel):
     message: str
     remaining_seconds: Optional[float] = None
     phone_number: Optional[str] = None
+
+
+class AudioMetricsPacket(BaseModel):
+    type: Literal["audio_metrics"] = "audio_metrics"
+    sample_rate: int = Field(default=16000, description="Sampling rate in Hz")
+    samples: int = Field(..., description="Sample count in chunk")
+    duration_ms: float = Field(..., description="Duration of chunk in milliseconds")
+    rms: float = Field(..., description="RMS volume level")
+    peak: float = Field(..., description="Peak amplitude")

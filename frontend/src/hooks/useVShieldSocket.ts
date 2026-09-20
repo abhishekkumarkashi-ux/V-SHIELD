@@ -23,6 +23,15 @@ export interface TelemetryPacket {
     | 'TERMINATE_AND_ALERT';
 }
 
+export interface ServerAudioMetrics {
+  type: 'audio_metrics';
+  sample_rate: number;
+  samples: number;
+  duration_ms: number;
+  rms: number;
+  peak: number;
+}
+
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface UseVShieldSocketProps {
@@ -38,6 +47,7 @@ export function useVShieldSocket({
 }: UseVShieldSocketProps = {}) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [latestPacket, setLatestPacket] = useState<TelemetryPacket | null>(null);
+  const [serverAudioMetrics, setServerAudioMetrics] = useState<ServerAudioMetrics | null>(null);
   const [history, setHistory] = useState<TelemetryPacket[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -89,6 +99,10 @@ export function useVShieldSocket({
             if (data.type === 'model_error' || data.type === 'audio_error' || data.type === 'protocol_error') {
               console.warn('[V-SHIELD WS] Error received from gateway:', data);
               setLastError(data.error || 'Gateway protocol error');
+              return;
+            }
+            if (data.type === 'audio_metrics') {
+              setServerAudioMetrics(data);
               return;
             }
 
@@ -163,6 +177,7 @@ export function useVShieldSocket({
       wsRef.current.send(JSON.stringify({ type: 'reset' }));
     }
     setLatestPacket(null);
+    setServerAudioMetrics(null);
     setHistory([]);
   }, []);
 
@@ -175,6 +190,7 @@ export function useVShieldSocket({
   return {
     status,
     latestPacket,
+    serverAudioMetrics,
     history,
     lastError,
     connect,
