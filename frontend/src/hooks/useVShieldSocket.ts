@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 export interface TelemetryMetrics {
   spoof_probability: number;
   speaker_similarity: number | null;
+  speaker_status?: 'VERIFIED' | 'MISMATCH' | 'EVALUATING' | 'NO_VOICEPRINT' | string;
   buffer_energy_rms: number;
   vad_speech_ratio?: number;
   latency_ms?: number;
@@ -23,6 +24,14 @@ export interface TelemetryPacket {
     | 'TERMINATE_AND_ALERT';
   status?: 'success' | 'error';
   pipeline_status?: string;
+  speaker_status?: 'VERIFIED' | 'MISMATCH' | 'EVALUATING' | 'NO_VOICEPRINT' | string;
+  speaker?: {
+    status: string;
+    similarity: number | null;
+    speaker_id: string | null;
+    is_match: boolean;
+    has_voiceprint: boolean;
+  };
   anti_spoof?: {
     score: number;
   };

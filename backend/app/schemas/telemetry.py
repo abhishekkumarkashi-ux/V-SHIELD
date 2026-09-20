@@ -17,6 +17,10 @@ class TelemetryMetrics(BaseModel):
         le=1.0,
         description="ECAPA-TDNN cosine similarity against enrolled speaker, or None if unenrolled",
     )
+    speaker_status: Optional[str] = Field(
+        default="NO_VOICEPRINT",
+        description="ECAPA speaker verification state (VERIFIED, MISMATCH, EVALUATING, NO_VOICEPRINT)",
+    )
     buffer_energy_rms: float = Field(
         ..., ge=0.0, description="Root-mean-square energy of the active sliding window"
     )
@@ -57,6 +61,9 @@ class TelemetryPacket(BaseModel):
     )
     pipeline_status: Optional[str] = Field(
         default="ANALYZING", description="Pipeline execution state"
+    )
+    speaker_status: Optional[str] = Field(
+        default="NO_VOICEPRINT", description="Speaker verification state"
     )
 
 

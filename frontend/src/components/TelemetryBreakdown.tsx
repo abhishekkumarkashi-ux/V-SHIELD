@@ -13,6 +13,7 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
 }) => {
   const spoofProb = metrics?.spoof_probability ?? 0.0;
   const speakerSim = metrics?.speaker_similarity ?? null;
+  const speakerStatus = metrics?.speaker_status;
   const rmsEnergy = metrics?.buffer_energy_rms ?? 0.0;
   const latency = metrics?.latency_ms ?? 0.0;
 
@@ -21,9 +22,19 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
   const isLowSpoof = spoofProb < 0.30;
 
   // ECAPA Biometric Match Indicator
-  const hasVoiceprint = speakerSim !== null && speakerSim !== undefined;
-  const isBiometricMatch = hasVoiceprint && speakerSim > 0.70;
-  const isBiometricMismatch = hasVoiceprint && speakerSim < 0.40;
+  const hasVoiceprint =
+    speakerStatus !== 'NO_VOICEPRINT' && speakerSim !== null && speakerSim !== undefined;
+  const isBiometricMatch =
+    speakerStatus === 'VERIFIED' || (hasVoiceprint && speakerSim >= 0.70);
+  const isBiometricMismatch =
+    speakerStatus === 'MISMATCH' || (hasVoiceprint && speakerSim <= 0.40);
+  const displayStatus = !hasVoiceprint
+    ? 'NO_VOICEPRINT'
+    : isBiometricMatch
+    ? 'VERIFIED'
+    : isBiometricMismatch
+    ? 'MISMATCH'
+    : 'EVALUATING';
 
   return (
     <div className="grid grid-cols-2 gap-3 w-full">
@@ -77,7 +88,7 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
 
         <div className="my-2 flex items-baseline justify-between">
           <span className="text-2xl font-bold font-mono text-slate-100">
-            {hasVoiceprint ? speakerSim.toFixed(3) : '—'}
+            {hasVoiceprint && speakerSim !== null ? speakerSim.toFixed(3) : '—'}
           </span>
           <span
             className={`text-xs font-semibold px-2 py-0.5 rounded ${
@@ -90,7 +101,7 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
                 : 'bg-amber-950/80 text-amber-300 border border-amber-500/30'
             }`}
           >
-            {!hasVoiceprint ? 'NO PROFILE' : isBiometricMatch ? 'VERIFIED' : isBiometricMismatch ? 'MISMATCH' : 'EVALUATING'}
+            {displayStatus}
           </span>
         </div>
 

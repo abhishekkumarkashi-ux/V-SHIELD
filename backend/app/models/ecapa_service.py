@@ -7,7 +7,7 @@ Implements speaker enrollment, persistent SQLite storage, and cosine similarity 
 import os
 import sqlite3
 import time
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -179,22 +179,47 @@ class ECAPAService:
     def extract_embedding(self, audio: Union[bytes, np.ndarray, torch.Tensor]) -> np.ndarray:
         """
         Extracts 192-dimensional speaker embedding from audio.
-        Audio can be raw PCM16 bytes, numpy float32, or PyTorch tensor.
+        Audio can be raw Float32/PCM16 bytes, numpy float32, or PyTorch tensor.
+        Auto-detects Float32 vs PCM16 byte representations.
         """
         if isinstance(audio, bytes):
-            int16_data = np.frombuffer(audio, dtype=np.int16)
-            audio_np = int16_data.astype(np.float32) / 32768.0
+            # Auto-detect Float32 PCM bytes vs PCM16 bytes
+            parsed_as_f32 = False
+            if len(audio) % 4 == 0 and len(audio) >= 4:
+                try:
+                    candidate = np.frombuffer(audio, dtype=np.float32)
+                    if np.all(np.isfinite(candidate)):
+                        max_abs = float(np.max(np.abs(candidate))) if len(candidate) > 0 else 0.0
+                        if max_abs <= 5.0:
+                            audio_np = candidate.astype(np.float32)
+                            parsed_as_f32 = True
+                except Exception:
+                    parsed_as_f32 = False
+
+            if not parsed_as_f32:
+                valid_len = (len(audio) // 2) * 2
+                int16_data = np.frombuffer(audio[:valid_len], dtype=np.int16)
+                audio_np = int16_data.astype(np.float32) / 32768.0
+
+            audio_np = np.clip(audio_np, -1.0, 1.0)
             wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
         elif isinstance(audio, np.ndarray):
-            audio_np = audio.astype(np.float32)
-            wav_tensor = torch.from_numpy(audio_np)
-            if wav_tensor.dim() == 1:
-                wav_tensor = wav_tensor.unsqueeze(0)
+            if audio.dtype == np.int16:
+                audio_np = audio.astype(np.float32) / 32768.0
+            else:
+                audio_np = audio.astype(np.float32)
+            if audio_np.ndim > 1:
+                audio_np = audio_np.flatten()
+            audio_np = np.clip(audio_np, -1.0, 1.0)
+            wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
         else:
-            wav_tensor = audio.detach().cpu()
-            if wav_tensor.dim() == 1:
+            wav_tensor = audio.detach().cpu().float()
+            if wav_tensor.dim() > 1:
+                wav_tensor = wav_tensor.squeeze()
+            if wav_tensor.dim() == 0:
                 wav_tensor = wav_tensor.unsqueeze(0)
-            audio_np = wav_tensor.squeeze().numpy()
+            audio_np = np.clip(wav_tensor.numpy(), -1.0, 1.0)
+            wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
 
         # 1. High-Performance ONNX Runtime Fast Path
         if self.is_onnx_loaded and self.ort_session is not None:
@@ -287,6 +312,62 @@ class ECAPAService:
         dot_product = float(np.dot(enrolled_emb, current_emb))
         cos_sim = max(-1.0, min(1.0, dot_product))
         return cos_sim
+
+    def verify_speaker_detailed(
+        self,
+        audio: Union[bytes, np.ndarray, torch.Tensor],
+        speaker_id: Optional[str],
+        threshold_match: float = 0.70,
+        threshold_mismatch: float = 0.40,
+    ) -> Dict[str, Any]:
+        """
+        Performs explicit speaker verification against enrolled voiceprint profiles.
+
+        Returns:
+            Dict containing:
+                - status: 'VERIFIED' (>=0.70), 'MISMATCH' (<=0.40), 'EVALUATING' (0.40-0.70),
+                          or 'NO_VOICEPRINT' if no profile exists for speaker_id.
+                - similarity: float cosine similarity or None if unenrolled.
+                - speaker_id: speaker ID queried.
+                - is_match: bool indicating verified biometric identity match.
+                - has_voiceprint: bool indicating enrolled profile was found.
+        """
+        if not speaker_id or speaker_id not in self._enrolled_embeddings:
+            return {
+                "status": "NO_VOICEPRINT",
+                "similarity": None,
+                "speaker_id": speaker_id,
+                "is_match": False,
+                "has_voiceprint": False,
+            }
+
+        similarity = self.verify_speaker(audio, speaker_id)
+        if similarity is None:
+            return {
+                "status": "NO_VOICEPRINT",
+                "similarity": None,
+                "speaker_id": speaker_id,
+                "is_match": False,
+                "has_voiceprint": False,
+            }
+
+        if similarity >= threshold_match:
+            status = "VERIFIED"
+            is_match = True
+        elif similarity <= threshold_mismatch:
+            status = "MISMATCH"
+            is_match = False
+        else:
+            status = "EVALUATING"
+            is_match = False
+
+        return {
+            "status": status,
+            "similarity": similarity,
+            "speaker_id": speaker_id,
+            "is_match": is_match,
+            "has_voiceprint": True,
+        }
 
     def get_enrolled_speakers(self) -> List[Dict]:
         """Returns list of enrolled speaker profiles."""

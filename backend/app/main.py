@@ -395,11 +395,11 @@ async def websocket_live_call(
                         _, spoof_prob = aasist_service.predict(safe_audio)
 
                         # 3. ECAPA-TDNN Speaker Biometric Verification
-                        speaker_similarity = None
-                        if active_speaker_id:
-                            speaker_similarity = ecapa_service.verify_speaker(
-                                safe_audio, active_speaker_id
-                            )
+                        spk_verif = ecapa_service.verify_speaker_detailed(
+                            safe_audio, active_speaker_id
+                        )
+                        speaker_similarity = spk_verif["similarity"]
+                        speaker_status = spk_verif["status"]
 
                         # 4. Multi-Signal Fusion & Dynamic Risk Aggregation
                         risk_score, classification, recommended_action = risk_engine.evaluate(
@@ -436,6 +436,7 @@ async def websocket_live_call(
                                     if speaker_similarity is not None
                                     else None
                                 ),
+                                speaker_status=speaker_status,
                                 buffer_energy_rms=round(rms_energy, 4),
                                 vad_speech_ratio=round(speech_ratio, 4),
                                 latency_ms=latency_ms,
@@ -444,6 +445,7 @@ async def websocket_live_call(
                             mfa_status=mfa_status,
                             status="success",
                             pipeline_status="ANALYZING",
+                            speaker_status=speaker_status,
                         )
 
                         packet_dict = packet.model_dump()
@@ -454,6 +456,17 @@ async def websocket_live_call(
                         }
                         packet_dict["risk"] = {
                             "score": round(risk_score, 2),
+                        }
+                        packet_dict["speaker"] = {
+                            "status": speaker_status,
+                            "similarity": (
+                                round(speaker_similarity, 4)
+                                if speaker_similarity is not None
+                                else None
+                            ),
+                            "speaker_id": active_speaker_id,
+                            "is_match": spk_verif["is_match"],
+                            "has_voiceprint": spk_verif["has_voiceprint"],
                         }
                         await websocket.send_text(json.dumps(packet_dict))
                     except Exception as model_err:
