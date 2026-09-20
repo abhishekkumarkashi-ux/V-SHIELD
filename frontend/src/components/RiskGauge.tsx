@@ -3,7 +3,7 @@ import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
 
 interface RiskGaugeProps {
   score: number; // 0 to 100
-  classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK';
+  classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'INSUFFICIENT_DATA';
 }
 
 export const RiskGauge: React.FC<RiskGaugeProps> = ({ score, classification }) => {
@@ -25,7 +25,13 @@ export const RiskGauge: React.FC<RiskGaugeProps> = ({ score, classification }) =
   let statusText = 'VERIFIED GENUINE';
   let Icon = ShieldCheck;
 
-  if (classification === 'HIGH_RISK') {
+  if (classification === 'INSUFFICIENT_DATA') {
+    themeColor = '#64748b'; // Slate
+    glowColor = 'rgba(100, 116, 139, 0.4)';
+    bgBadge = 'bg-slate-800/80 border-slate-600/40 text-slate-300';
+    statusText = 'AWAITING AUDIO';
+    Icon = ShieldCheck;
+  } else if (classification === 'HIGH_RISK') {
     themeColor = '#ef4444'; // Crimson
     glowColor = 'rgba(239, 68, 68, 0.45)';
     bgBadge = 'bg-red-950/80 border-red-500/40 text-red-400';

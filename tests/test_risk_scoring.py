@@ -1,12 +1,9 @@
 """
 Unit tests for RiskEngine (SIH 2026).
-Verifies multi-signal fusion, threat thresholds, and EMA smoothing.
+Verifies multi-signal fusion, threat thresholds, explainable factors,
+insufficient data guard, and EMA smoothing.
 """
 
-try:
-    import pytest
-except ImportError:
-    pytest = None
 from app.core.risk_engine import RiskEngine
 
 
@@ -91,3 +88,95 @@ def test_ema_smoothing_behavior():
     expected_s2 = round(0.70 * instant + 0.30 * s1, 1)
 
     assert abs(s2 - expected_s2) <= 0.2
+
+
+def test_insufficient_data_guard():
+    """
+    A call is NEVER marked safe merely because model telemetry is absent.
+    If spoof_prob is None or pure silence/zero speech with no prior state,
+    decision must be 'INSUFFICIENT_DATA' and action 'MONITOR'.
+    """
+    engine = RiskEngine()
+
+    # 1. No model probability provided
+    res_none = engine.evaluate_detailed(spoof_prob=None, is_speech_active=False)
+    assert res_none["decision"] == "INSUFFICIENT_DATA"
+    assert res_none["classification"] == "INSUFFICIENT_DATA"
+    assert res_none["recommended_action"] == "MONITOR"
+
+    # 2. Complete silence before any speech is observed
+    engine.reset()
+    res_silence = engine.evaluate_detailed(
+        spoof_prob=0.05,
+        speaker_similarity=None,
+        is_speech_active=False,
+        speech_ratio=0.0,
+    )
+    assert res_silence["decision"] == "INSUFFICIENT_DATA"
+    assert res_silence["recommended_action"] == "MONITOR"
+
+
+def test_explainability_factors():
+    """
+    Verifies that evaluate_detailed returns an explainable breakdown
+    of contributing signals (anti_spoof, speaker_similarity, speech_activity).
+    """
+    engine = RiskEngine(alpha=1.0)
+
+    detail = engine.evaluate_detailed(
+        spoof_prob=0.82,
+        speaker_similarity=0.41,
+        is_speech_active=True,
+        speech_ratio=0.95,
+    )
+
+    assert "risk_score" in detail
+    assert "decision" in detail
+    assert "factors" in detail
+    assert len(detail["factors"]) >= 2
+
+    factor_names = [f["name"] for f in detail["factors"]]
+    assert "anti_spoof" in factor_names
+    assert "speaker_similarity" in factor_names
+    assert "speech_activity" in factor_names
+
+    # Check anti_spoof factor properties
+    as_factor = next(f for f in detail["factors"] if f["name"] == "anti_spoof")
+    assert as_factor["value"] == 0.82
+    assert as_factor["contribution"] > 0
+    assert len(as_factor["description"]) > 0
+
+
+def test_unenrolled_speaker_risk_scoring():
+    """
+    When no enrolled speaker is present (speaker_similarity=None),
+    risk engine gracefully scores based on anti-spoof without crashing or forcing 0.0.
+    """
+    engine = RiskEngine(alpha=1.0)
+
+    # High spoof unenrolled
+    score_high, class_high, action_high = engine.evaluate(
+        spoof_prob=0.90, speaker_similarity=None, is_speech_active=True
+    )
+    assert score_high >= 75.0
+    assert class_high == "HIGH_RISK"
+
+    # Low spoof unenrolled
+    score_low, class_low, action_low = engine.evaluate(
+        spoof_prob=0.10, speaker_similarity=None, is_speech_active=True
+    )
+    assert score_low < 30.0
+    assert class_low == "LOW_RISK"
+    assert action_low == "ALLOW_CALL"
+
+
+def test_reset_clears_engine_state():
+    """Verifies that reset() clears EMA history and cached explanations."""
+    engine = RiskEngine(alpha=0.70)
+    engine.evaluate(spoof_prob=0.85, speaker_similarity=0.90)
+    assert engine._current_ema is not None
+    assert engine.last_explanation is not None
+
+    engine.reset()
+    assert engine._current_ema is None
+    assert engine.last_explanation is None

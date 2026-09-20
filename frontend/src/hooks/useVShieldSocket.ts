@@ -12,7 +12,14 @@ export interface TelemetryMetrics {
 export interface TelemetryPacket {
   timestamp: number;
   risk_score: number;
-  classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK';
+  classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'INSUFFICIENT_DATA';
+  decision?: string;
+  factors?: Array<{
+    name: string;
+    value: number | string | null;
+    contribution: number;
+    description: string;
+  }>;
   metrics: TelemetryMetrics;
   recommended_action:
     | 'ALLOW_CALL'
@@ -37,6 +44,13 @@ export interface TelemetryPacket {
   };
   risk?: {
     score: number;
+    decision?: string;
+    factors?: Array<{
+      name: string;
+      value: number | string | null;
+      contribution: number;
+      description: string;
+    }>;
   };
 }
 

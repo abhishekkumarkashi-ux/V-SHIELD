@@ -402,11 +402,15 @@ async def websocket_live_call(
                         speaker_status = spk_verif["status"]
 
                         # 4. Multi-Signal Fusion & Dynamic Risk Aggregation
-                        risk_score, classification, recommended_action = risk_engine.evaluate(
+                        risk_eval = risk_engine.evaluate_detailed(
                             spoof_prob=spoof_prob,
                             speaker_similarity=speaker_similarity,
                             is_speech_active=is_speech_active,
+                            speech_ratio=speech_ratio,
                         )
+                        risk_score = risk_eval["risk_score"]
+                        classification = risk_eval["classification"]
+                        recommended_action = risk_eval["recommended_action"]
 
                         # 4b. Layer 5 Automated Out-of-Band MFA Dispatch with Sliding Cooldown
                         mfa_status = "NONE"
@@ -429,6 +433,8 @@ async def websocket_live_call(
                             timestamp=time.time(),
                             risk_score=risk_score,
                             classification=classification,
+                            decision=risk_eval["decision"],
+                            factors=risk_eval["factors"],
                             metrics=TelemetryMetrics(
                                 spoof_probability=round(spoof_prob, 4),
                                 speaker_similarity=(
@@ -456,6 +462,8 @@ async def websocket_live_call(
                         }
                         packet_dict["risk"] = {
                             "score": round(risk_score, 2),
+                            "decision": risk_eval["decision"],
+                            "factors": risk_eval["factors"],
                         }
                         packet_dict["speaker"] = {
                             "status": speaker_status,

@@ -2,7 +2,7 @@
 Telemetry & API schemas for V-SHIELD.
 """
 
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -40,8 +40,14 @@ class TelemetryPacket(BaseModel):
     risk_score: float = Field(
         ..., ge=0.0, le=100.0, description="Multi-signal fused risk score (0-100)"
     )
-    classification: Literal["LOW_RISK", "MEDIUM_RISK", "HIGH_RISK"] = Field(
-        ..., description="Tri-tier threat level"
+    classification: Literal["LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "INSUFFICIENT_DATA"] = Field(
+        ..., description="Tri-tier threat level or insufficient data state"
+    )
+    decision: Optional[str] = Field(
+        default=None, description="Explainable decision status (e.g. LOW_RISK, ELEVATED_RISK, HIGH_RISK, INSUFFICIENT_DATA)"
+    )
+    factors: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Explainable multi-signal risk breakdown factors"
     )
     metrics: TelemetryMetrics
     recommended_action: Literal[
