@@ -12,7 +12,7 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
   enrolledSpeakerName,
 }) => {
   const spoofProb = metrics?.spoof_probability ?? 0.0;
-  const speakerSim = metrics?.speaker_similarity ?? 0.0;
+  const speakerSim = metrics?.speaker_similarity ?? null;
   const rmsEnergy = metrics?.buffer_energy_rms ?? 0.0;
   const latency = metrics?.latency_ms ?? 0.0;
 
@@ -21,8 +21,9 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
   const isLowSpoof = spoofProb < 0.30;
 
   // ECAPA Biometric Match Indicator
-  const isBiometricMatch = speakerSim > 0.70;
-  const isBiometricMismatch = speakerSim < 0.40;
+  const hasVoiceprint = speakerSim !== null && speakerSim !== undefined;
+  const isBiometricMatch = hasVoiceprint && speakerSim > 0.70;
+  const isBiometricMismatch = hasVoiceprint && speakerSim < 0.40;
 
   return (
     <div className="grid grid-cols-2 gap-3 w-full">
@@ -76,31 +77,37 @@ export const TelemetryBreakdown: React.FC<TelemetryBreakdownProps> = ({
 
         <div className="my-2 flex items-baseline justify-between">
           <span className="text-2xl font-bold font-mono text-slate-100">
-            {speakerSim.toFixed(3)}
+            {hasVoiceprint ? speakerSim.toFixed(3) : '—'}
           </span>
           <span
             className={`text-xs font-semibold px-2 py-0.5 rounded ${
-              isBiometricMatch
+              !hasVoiceprint
+                ? 'bg-slate-800/80 text-slate-400 border border-slate-700/50'
+                : isBiometricMatch
                 ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30'
                 : isBiometricMismatch
                 ? 'bg-red-950/80 text-red-400 border border-red-500/30'
                 : 'bg-amber-950/80 text-amber-300 border border-amber-500/30'
             }`}
           >
-            {isBiometricMatch ? 'VERIFIED' : isBiometricMismatch ? 'MISMATCH' : 'EVALUATING'}
+            {!hasVoiceprint ? 'NO PROFILE' : isBiometricMatch ? 'VERIFIED' : isBiometricMismatch ? 'MISMATCH' : 'EVALUATING'}
           </span>
         </div>
 
         <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
           <div
             className={`h-full transition-all duration-300 ${
-              isBiometricMatch ? 'bg-emerald-500' : isBiometricMismatch ? 'bg-red-500' : 'bg-amber-500'
+              !hasVoiceprint ? 'bg-slate-700' : isBiometricMatch ? 'bg-emerald-500' : isBiometricMismatch ? 'bg-red-500' : 'bg-amber-500'
             }`}
-            style={{ width: `${Math.min(100, Math.max(0, ((speakerSim + 1) / 2) * 100))}%` }}
+            style={{ width: `${hasVoiceprint ? Math.min(100, Math.max(0, ((speakerSim + 1) / 2) * 100)) : 0}%` }}
           />
         </div>
         <span className="text-[11px] text-slate-400 mt-1 truncate">
-          {enrolledSpeakerName ? `vs. ${enrolledSpeakerName}` : 'No enrolled voiceprint selected'}
+          {hasVoiceprint
+            ? enrolledSpeakerName
+              ? `vs. ${enrolledSpeakerName}`
+              : 'Enrolled speaker verified'
+            : 'No enrolled voiceprint active'}
         </span>
       </div>
 

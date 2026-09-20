@@ -11,8 +11,11 @@ class TelemetryMetrics(BaseModel):
     spoof_probability: float = Field(
         ..., ge=0.0, le=1.0, description="AASIST probability of audio being synthetic/spoofed"
     )
-    speaker_similarity: float = Field(
-        ..., ge=-1.0, le=1.0, description="ECAPA-TDNN cosine similarity against enrolled speaker"
+    speaker_similarity: Optional[float] = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="ECAPA-TDNN cosine similarity against enrolled speaker, or None if unenrolled",
     )
     buffer_energy_rms: float = Field(
         ..., ge=0.0, description="Root-mean-square energy of the active sliding window"
@@ -48,6 +51,12 @@ class TelemetryPacket(BaseModel):
     ] = Field(..., description="Automated mitigation decision triggered by the Risk Engine")
     mfa_status: Literal["NONE", "DISPATCHED", "COOLDOWN"] = Field(
         default="NONE", description="Out-of-band MFA automated trigger status"
+    )
+    status: Literal["success", "error"] = Field(
+        default="success", description="Inference execution status"
+    )
+    pipeline_status: Optional[str] = Field(
+        default="ANALYZING", description="Pipeline execution state"
     )
 
 
@@ -151,3 +160,9 @@ class AudioMetricsPacket(BaseModel):
     duration_ms: float = Field(..., description="Duration of chunk in milliseconds")
     rms: float = Field(..., description="RMS volume level")
     peak: float = Field(..., description="Peak amplitude")
+    pipeline_status: Optional[str] = Field(
+        default=None, description="Current audio pipeline state ('LISTENING', 'WAITING_FOR_AUDIO', etc.)"
+    )
+    speech_state: Optional[str] = Field(
+        default=None, description="Acoustic VAD state on chunk ('SPEECH' or 'SILENCE')"
+    )

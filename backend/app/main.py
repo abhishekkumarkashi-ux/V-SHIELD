@@ -30,6 +30,7 @@ from app.core.vad import MarginPreservingVAD
 from app.models.aasist_service import AASISTService
 from app.models.ecapa_service import ECAPAService
 from app.schemas.telemetry import (
+    AudioMetricsPacket,
     SpeakerEnrollResponse,
     SpeakerProfile,
     SystemHealthResponse,
@@ -237,6 +238,7 @@ async def websocket_live_call(
     active_target_phone = target_phone or settings.DEFAULT_MFA_TARGET_PHONE
     active_audio_format = None
     session_active = False
+    pipeline_state = "READY"
     last_metrics_report_time = 0.0
 
     try:
@@ -362,6 +364,8 @@ async def websocket_live_call(
 
                 if not session_active:
                     session_active = True
+                if pipeline_state in ("READY", "WAITING_FOR_AUDIO"):
+                    pipeline_state = "LISTENING"
 
                 try:
                     buffer.append_samples(audio_samples)
@@ -378,6 +382,7 @@ async def websocket_live_call(
                 extracted_any = False
                 for window_tensor in buffer.extract_all_ready_windows():
                     extracted_any = True
+                    pipeline_state = "ANALYZING"
                     t_start = time.perf_counter()
 
                     try:
@@ -429,7 +434,7 @@ async def websocket_live_call(
                                 speaker_similarity=(
                                     round(speaker_similarity, 4)
                                     if speaker_similarity is not None
-                                    else 0.0
+                                    else None
                                 ),
                                 buffer_energy_rms=round(rms_energy, 4),
                                 vad_speech_ratio=round(speech_ratio, 4),
@@ -437,17 +442,28 @@ async def websocket_live_call(
                             ),
                             recommended_action=recommended_action,
                             mfa_status=mfa_status,
+                            status="success",
+                            pipeline_status="ANALYZING",
                         )
 
                         packet_dict = packet.model_dump()
                         packet_dict["type"] = "analysis"
                         packet_dict["session_id"] = session_id
+                        packet_dict["anti_spoof"] = {
+                            "score": round(spoof_prob, 4),
+                        }
+                        packet_dict["risk"] = {
+                            "score": round(risk_score, 2),
+                        }
                         await websocket.send_text(json.dumps(packet_dict))
                     except Exception as model_err:
+                        pipeline_state = "ANALYSIS_ERROR"
                         print(f"[WS Error] Inference pipeline failure: {model_err}")
                         await websocket.send_text(
                             json.dumps({
-                                "type": "model_error",
+                                "type": "analysis",
+                                "status": "error",
+                                "pipeline_status": "ANALYSIS_ERROR",
                                 "error": f"Inference pipeline failure: {model_err}",
                             })
                         )
@@ -460,16 +476,17 @@ async def websocket_live_call(
                 ) or (now - last_metrics_report_time >= 1.0)
                 if should_report_metrics:
                     last_metrics_report_time = now
-                    await websocket.send_text(
-                        json.dumps({
-                            "type": "audio_metrics",
-                            "sample_rate": sample_rate,
-                            "samples": sample_count,
-                            "duration_ms": duration_ms,
-                            "rms": round(chunk_rms, 4),
-                            "peak": round(chunk_peak, 4),
-                        })
+                    chunk_speech_diag = vad.analyze_speech(audio_samples)
+                    metrics_packet = AudioMetricsPacket(
+                        sample_rate=sample_rate,
+                        samples=sample_count,
+                        duration_ms=duration_ms,
+                        rms=round(chunk_rms, 4),
+                        peak=round(chunk_peak, 4),
+                        pipeline_status=pipeline_state,
+                        speech_state=chunk_speech_diag["state"],
                     )
+                    await websocket.send_text(json.dumps(metrics_packet.model_dump()))
 
             elif "text" in message and message["text"]:
                 try:
@@ -487,6 +504,7 @@ async def websocket_live_call(
 
                 if msg_type == "start":
                     session_active = True
+                    pipeline_state = "WAITING_FOR_AUDIO"
                     if "speaker_id" in payload:
                         active_speaker_id = payload["speaker_id"]
                     if "target_phone" in payload:
@@ -503,11 +521,13 @@ async def websocket_live_call(
                             "speaker_id": active_speaker_id,
                             "format": active_audio_format or "auto",
                             "sample_rate": sample_rate,
+                            "pipeline_status": "WAITING_FOR_AUDIO",
                         })
                     )
 
                 elif msg_type == "stop":
                     session_active = False
+                    pipeline_state = "READY"
                     buffer.reset()
                     risk_engine.reset()
                     last_metrics_report_time = 0.0
@@ -516,6 +536,7 @@ async def websocket_live_call(
                         json.dumps({
                             "type": "session_stopped",
                             "session_id": session_id,
+                            "pipeline_status": "READY",
                             "message": "Live call analysis session stopped.",
                         })
                     )
@@ -524,11 +545,24 @@ async def websocket_live_call(
                     buffer.reset()
                     risk_engine.reset()
                     last_metrics_report_time = 0.0
+                    pipeline_state = "WAITING_FOR_AUDIO" if session_active else "READY"
                     await websocket.send_text(
                         json.dumps({
                             "type": "session_reset",
                             "session_id": session_id,
+                            "pipeline_status": pipeline_state,
                             "message": "Audio buffer and risk engine state reset.",
+                        })
+                    )
+
+                elif msg_type in ("status", "get_status"):
+                    await websocket.send_text(
+                        json.dumps({
+                            "type": "pipeline_status",
+                            "status": pipeline_state,
+                            "session_id": session_id,
+                            "session_active": session_active,
+                            "speaker_id": active_speaker_id,
                         })
                     )
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 export interface TelemetryMetrics {
   spoof_probability: number;
-  speaker_similarity: number;
+  speaker_similarity: number | null;
   buffer_energy_rms: number;
   vad_speech_ratio?: number;
   latency_ms?: number;
@@ -21,6 +21,14 @@ export interface TelemetryPacket {
     | 'TRIGGER_MFA_CALLBACK'
     | 'QUARANTINE_TRANSACTION'
     | 'TERMINATE_AND_ALERT';
+  status?: 'success' | 'error';
+  pipeline_status?: string;
+  anti_spoof?: {
+    score: number;
+  };
+  risk?: {
+    score: number;
+  };
 }
 
 export interface ServerAudioMetrics {
@@ -30,9 +38,12 @@ export interface ServerAudioMetrics {
   duration_ms: number;
   rms: number;
   peak: number;
+  pipeline_status?: string;
+  speech_state?: string;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type PipelineStatus = 'WAITING_FOR_AUDIO' | 'LISTENING' | 'ANALYZING' | 'ANALYSIS_ERROR' | 'READY' | string;
 
 interface UseVShieldSocketProps {
   url?: string;
@@ -46,6 +57,7 @@ export function useVShieldSocket({
   onPacketReceived,
 }: UseVShieldSocketProps = {}) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
+  const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>('READY');
   const [latestPacket, setLatestPacket] = useState<TelemetryPacket | null>(null);
   const [serverAudioMetrics, setServerAudioMetrics] = useState<ServerAudioMetrics | null>(null);
   const [history, setHistory] = useState<TelemetryPacket[]>([]);
@@ -71,9 +83,9 @@ export function useVShieldSocket({
 
       ws.onopen = () => {
         setStatus('connected');
+        setLastError(null);
         console.log('[V-SHIELD WS] Connected to backend telemetry gateway');
-        // Automatically initiate session handshake
-        ws.send(JSON.stringify({ type: 'start', speaker_id: speakerId }));
+        ws.send(JSON.stringify({ type: 'start', speaker_id: speakerId, format: 'float32' }));
       };
 
       ws.onmessage = (event) => {
@@ -81,28 +93,44 @@ export function useVShieldSocket({
           try {
             const data = JSON.parse(event.data);
 
+            if (data.pipeline_status) {
+              setPipelineStatus(data.pipeline_status);
+            }
+
             if (data.type === 'session_started') {
               console.log('[V-SHIELD WS] Session started:', data.session_id);
               setLastError(null);
+              setPipelineStatus(data.pipeline_status || 'WAITING_FOR_AUDIO');
               return;
             }
             if (data.type === 'session_stopped') {
               console.log('[V-SHIELD WS] Session stopped:', data.session_id);
+              setPipelineStatus(data.pipeline_status || 'READY');
               return;
             }
             if (data.type === 'session_reset') {
               console.log('[V-SHIELD WS] Session reset');
               setLatestPacket(null);
               setHistory([]);
+              setPipelineStatus(data.pipeline_status || 'READY');
               return;
             }
-            if (data.type === 'model_error' || data.type === 'audio_error' || data.type === 'protocol_error') {
+            if (
+              data.type === 'model_error' ||
+              data.type === 'audio_error' ||
+              data.type === 'protocol_error' ||
+              (data.type === 'analysis' && data.status === 'error')
+            ) {
               console.warn('[V-SHIELD WS] Error received from gateway:', data);
               setLastError(data.error || 'Gateway protocol error');
+              setPipelineStatus(data.pipeline_status || 'ANALYSIS_ERROR');
               return;
             }
             if (data.type === 'audio_metrics') {
               setServerAudioMetrics(data);
+              if (data.pipeline_status) {
+                setPipelineStatus(data.pipeline_status);
+              }
               return;
             }
 
@@ -110,6 +138,7 @@ export function useVShieldSocket({
             if (typeof data.risk_score === 'number' && data.metrics) {
               const packet: TelemetryPacket = data;
               setLatestPacket(packet);
+              setPipelineStatus(data.pipeline_status || 'ANALYZING');
               setHistory((prev) => [...prev.slice(-49), packet]);
               onPacketReceived?.(packet);
             }
@@ -189,6 +218,7 @@ export function useVShieldSocket({
 
   return {
     status,
+    pipelineStatus,
     latestPacket,
     serverAudioMetrics,
     history,
