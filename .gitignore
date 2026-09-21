@@ -80,3 +80,17 @@ logs/
 # Local model caches
 .cache/
 huggingface/
+
+# Secrets, Keys, and Sensitive Credentials
+*.pem
+*.key
+*.cert
+*.pfx
+secrets/
+credentials/
+tokens/
+
+# Raw audio recordings & transient uploads (preserve test sample fixtures)
+recordings/
+uploads/
+*.raw
