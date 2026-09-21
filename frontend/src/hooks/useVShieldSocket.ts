@@ -13,6 +13,11 @@ export interface TelemetryPacket {
   timestamp: number;
   risk_score: number;
   classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'INSUFFICIENT_DATA';
+  call_sid?: string;
+  stream_sid?: string;
+  caller_phone?: string;
+  source?: string;
+  speaker_verification_status?: string;
   decision?: string;
   factors?: Array<{
     name: string;
@@ -87,6 +92,9 @@ export function useVShieldSocket({
   const [serverAudioMetrics, setServerAudioMetrics] = useState<ServerAudioMetrics | null>(null);
   const [history, setHistory] = useState<TelemetryPacket[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [activeCallSid, setActiveCallSid] = useState<string | null>(null);
+  const [activeCallerPhone, setActiveCallerPhone] = useState<string | null>(null);
+  const [activeCallStatus, setActiveCallStatus] = useState<'IDLE' | 'CALL_INCOMING' | 'STREAMING' | 'ENDED'>('IDLE');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
@@ -140,6 +148,24 @@ export function useVShieldSocket({
               setPipelineStatus(data.pipeline_status || 'WAITING_FOR_AUDIO');
               return;
             }
+            if (data.type === 'twilio_call_started') {
+              console.log('[V-SHIELD WS] Twilio call started:', data.call_sid);
+              setActiveCallSid(data.call_sid || null);
+              setActiveCallerPhone(data.caller_phone || null);
+              setActiveCallStatus('STREAMING');
+              setPipelineStatus('ANALYZING');
+              return;
+            }
+            if (data.type === 'twilio_call_stopped') {
+              console.log('[V-SHIELD WS] Twilio call stopped:', data.call_sid);
+              setActiveCallStatus('ENDED');
+              setTimeout(() => {
+                setActiveCallSid(null);
+                setActiveCallerPhone(null);
+                setActiveCallStatus('IDLE');
+              }, 4000);
+              return;
+            }
             if (data.type === 'session_stopped') {
               console.log('[V-SHIELD WS] Session stopped:', data.session_id);
               setPipelineStatus(data.pipeline_status || 'READY');
@@ -176,6 +202,13 @@ export function useVShieldSocket({
             // Route standard telemetry analysis packets
             if (typeof data.risk_score === 'number' && data.metrics) {
               const packet: TelemetryPacket = data;
+              if (packet.call_sid) {
+                setActiveCallSid(packet.call_sid);
+                setActiveCallStatus('STREAMING');
+              }
+              if (packet.caller_phone) {
+                setActiveCallerPhone(packet.caller_phone);
+              }
               setLatestPacket(packet);
               setPipelineStatus(data.pipeline_status || 'ANALYZING');
               setHistory((prev) => [...prev.slice(-49), packet]);
@@ -273,5 +306,8 @@ export function useVShieldSocket({
     switchSpeaker,
     resetCall,
     isConnected: status === 'connected',
+    activeCallSid,
+    activeCallerPhone,
+    activeCallStatus,
   };
 }

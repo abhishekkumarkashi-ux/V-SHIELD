@@ -131,8 +131,21 @@ Accepts multipart audio file uploads to test suspect voice recordings against an
 docker-compose up --build
 ```
 
-### Option C: Run Unit Tests
+### Option C: Run Unit & Integration Tests
 ```bash
 pytest tests/ -v
 ```
-Verifies audio buffer sliding window, VAD 300 ms margin compliance, and risk score calculation logic.
+Verifies audio buffer sliding window, VAD 300 ms margin compliance, Twilio live telephone gateway, and risk score calculation logic.
+
+---
+
+## 6. Twilio Live Telephone Call Gateway
+
+V-SHIELD supports direct inbound cellular and PSTN telephone call monitoring via Twilio Media Streams:
+
+- **Voice Webhook**: `POST /api/v1/twilio/voice` generates cryptographic TwiML `<Connect><Stream>` instructions.
+- **Media Stream**: `WS /ws/twilio-stream` ingests 8 kHz μ-law audio frames, performs 16-bit linear PCM conversion and polyphase upsampling to 16 kHz mono.
+- **Call-Specific Ring Buffers**: Completely isolated sliding buffers (`capacity=64600`, `hop=8000`) per active `CallSid`.
+- **Live Telemetry & Dashboard**: Telephony threat events, spoof probability, speaker similarity, and automated MFA actions stream in real time to the React dashboard.
+
+For configuration and ngrok setup, see [docs/TWILIO_SETUP.md](docs/TWILIO_SETUP.md) and [docs/TWILIO_ARCHITECTURE.md](docs/TWILIO_ARCHITECTURE.md).

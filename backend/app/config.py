@@ -40,10 +40,11 @@ class Settings(BaseSettings):
     ECAPA_ONNX_PATH: Path = WEIGHTS_DIR / "ecapa_fp16.onnx"
     SPEAKERS_DB_PATH: Path = BASE_DIR / "vshield.db"
 
-    # MFA & Twilio Verify Configuration (SIH 2026)
+    # MFA & Twilio Inbound Telephony Configuration (SIH 2026)
     TWILIO_ACCOUNT_SID: Optional[str] = None
     TWILIO_AUTH_TOKEN: Optional[str] = None
     TWILIO_VERIFY_SERVICE_SID: Optional[str] = None
+    TWILIO_PUBLIC_BASE_URL: Optional[str] = None  # e.g. https://example.ngrok-free.app
     MFA_COOLDOWN_SECONDS: int = 120  # 2 minutes sliding cooldown
     MFA_ENABLED: bool = True
     DEFAULT_MFA_TARGET_PHONE: str = "+919876543210"

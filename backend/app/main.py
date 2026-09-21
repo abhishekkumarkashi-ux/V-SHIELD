@@ -66,14 +66,20 @@ from app.core.mfa_service import MFAService
 
 mfa_service = MFAService.get_instance()
 
-# Mount API Routers
 from app.routers.analyze import router as analyze_router
 from app.routers.auth import router as auth_router
 from app.routers.mfa import router as mfa_router
+from app.routers.twilio import (
+    handle_twilio_stream_session,
+    register_dashboard_subscriber,
+    router as twilio_router,
+    unregister_dashboard_subscriber,
+)
 
 app.include_router(analyze_router, prefix="/api/v1")
 app.include_router(mfa_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(twilio_router, prefix="/api/v1")
 
 
 def print_startup_banner() -> None:
@@ -236,6 +242,7 @@ async def websocket_live_call(
     Enforces authentication and active session state checks.
     """
     await websocket.accept()
+    await register_dashboard_subscriber(websocket)
     session_id = f"sess_{int(time.time() * 1000)}"
     endpoint_path = sanitize_url_for_logging(websocket.url.path)
     print(f"[WS] Client connected to {endpoint_path} (session={session_id})")
@@ -891,8 +898,15 @@ async def websocket_live_call(
     except Exception as err:
         print(f"[WS Error] Exception in {endpoint_path}: {err}")
     finally:
+        await unregister_dashboard_subscriber(websocket)
         buffer.reset()
         risk_engine.reset()
+
+
+@app.websocket("/ws/twilio-stream")
+async def websocket_twilio_stream(websocket: WebSocket):
+    """Twilio Media Stream bidirectional audio streaming gateway."""
+    await handle_twilio_stream_session(websocket)
 
 
 if __name__ == "__main__":

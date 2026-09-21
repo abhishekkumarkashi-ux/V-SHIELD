@@ -94,3 +94,8 @@ tokens/
 recordings/
 uploads/
 *.raw
+*.wav
+*.mp3
+*.flac
+*.ogg
+!samples/**

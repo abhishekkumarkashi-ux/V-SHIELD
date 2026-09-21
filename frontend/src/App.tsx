@@ -41,11 +41,6 @@ export const App: React.FC = () => {
     'CHECKING' | 'ONLINE' | 'MODEL_ERROR' | 'DEGRADED' | 'OFFLINE'
   >('CHECKING');
 
-  // Authenticate operator session on mount
-  useEffect(() => {
-    ensureAuthToken();
-  }, []);
-
   // WebSocket Telemetry Hook
   const {
     latestPacket,
@@ -61,9 +56,18 @@ export const App: React.FC = () => {
     switchSpeaker,
     resetCall,
     isConnected,
+    activeCallSid,
+    activeCallerPhone,
+    activeCallStatus,
   } = useVShieldSocket({
     speakerId: selectedSpeaker,
   });
+
+  // Authenticate operator session and connect telemetry websocket on mount
+  useEffect(() => {
+    ensureAuthToken();
+    connectWs();
+  }, [connectWs]);
 
   useEffect(() => {
     if (lastError) {
@@ -175,10 +179,11 @@ export const App: React.FC = () => {
     setTimeout(() => setAlertMessage(null), 5000);
   };
 
+  const isCallActive = isStreaming || activeCallStatus === 'STREAMING';
   const currentRiskScore = latestPacket?.risk_score ?? null;
   const currentClassification =
     latestPacket?.classification ??
-    (isStreaming ? (pipelineStatus === 'ANALYZING' ? 'ANALYZING' : 'LISTENING') : 'WAITING');
+    (isCallActive ? (pipelineStatus === 'ANALYZING' ? 'ANALYZING' : 'LISTENING') : 'WAITING');
   const currentAction = latestPacket?.recommended_action ?? null;
 
   const currentSpeakerObj = speakersList.find((s) => s.speaker_id === selectedSpeaker);
@@ -235,6 +240,16 @@ export const App: React.FC = () => {
             )}
           </div>
 
+          {/* Twilio Active PSTN Telephony Call Badge */}
+          {activeCallSid && (
+            <div className="flex items-center space-x-2 text-xs font-mono bg-purple-950/80 border border-purple-500/60 text-purple-300 px-3 py-1.5 rounded-lg shadow-lg animate-pulse">
+              <PhoneCall className="w-3.5 h-3.5 text-purple-400" />
+              <span className="font-bold text-white">TWILIO:</span>
+              <span className="text-purple-200">{activeCallSid.slice(0, 12)}...</span>
+              {activeCallerPhone && <span className="text-purple-400">({activeCallerPhone})</span>}
+            </div>
+          )}
+
           <div
             className={`flex items-center space-x-1.5 text-xs font-mono px-3 py-1.5 rounded-lg border transition-colors ${
               backendStatus === 'ONLINE'
@@ -255,7 +270,9 @@ export const App: React.FC = () => {
                 {isConnected && (
                   <>
                     <span className="text-emerald-600 font-bold">•</span>
-                    <span className="text-cyan-400 font-semibold text-[10px]">STREAMING</span>
+                    <span className="text-cyan-400 font-semibold text-[10px]">
+                      {activeCallSid ? 'TELEPHONY STREAM' : 'GATEWAY CONNECTED'}
+                    </span>
                   </>
                 )}
               </>
@@ -475,14 +492,14 @@ export const App: React.FC = () => {
               <RiskGauge
                 score={currentRiskScore}
                 classification={currentClassification}
-                isStreaming={isStreaming}
+                isStreaming={isCallActive}
               />
             </div>
 
             {/* Audio Waveform with 300ms margin preservation guard */}
             <AudioWaveform
               analyser={analyser}
-              isStreaming={isStreaming}
+              isStreaming={isCallActive}
               rmsVolume={rmsVolume}
             />
           </div>
@@ -504,7 +521,7 @@ export const App: React.FC = () => {
                 metrics={latestPacket?.metrics ?? null}
                 serverAudioMetrics={serverAudioMetrics}
                 pipelineStatus={pipelineStatus}
-                isStreaming={isStreaming}
+                isStreaming={isCallActive}
                 enrolledSpeakerName={currentSpeakerObj?.name}
               />
             </div>
