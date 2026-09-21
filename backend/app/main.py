@@ -538,16 +538,24 @@ async def websocket_live_call(
 
                     try:
                         # 1. Voice Activity Detection Guard (Preserves 300ms silence margins)
+                        t_vad_start = time.perf_counter()
                         is_speech_active, speech_ratio, safe_audio = vad.process_window(
                             window_tensor
                         )
+                        audio_buffer_ms = round((time.perf_counter() - t_vad_start) * 1000.0, 2)
 
                         # 2. AASIST Anti-Spoofing Inference (RawLogits & Softmax Spoof Prob)
+                        t_inf_start = time.perf_counter()
                         _, spoof_prob = aasist_service.predict(safe_audio)
+                        inference_ms = round((time.perf_counter() - t_inf_start) * 1000.0, 2)
 
                         # 3. ECAPA-TDNN Speaker Biometric Verification
+                        t_spk_start = time.perf_counter()
                         spk_verif = ecapa_service.verify_speaker_detailed(
                             safe_audio, active_speaker_id
+                        )
+                        speaker_verification_ms = round(
+                            (time.perf_counter() - t_spk_start) * 1000.0, 2
                         )
                         speaker_similarity = spk_verif["similarity"]
                         speaker_status = spk_verif["status"]
@@ -577,7 +585,13 @@ async def websocket_live_call(
                                 mfa_status = "COOLDOWN"
 
                         rms_energy = buffer.get_current_rms()
-                        latency_ms = round((time.perf_counter() - t_start) * 1000.0, 2)
+                        total_ms = round((time.perf_counter() - t_start) * 1000.0, 2)
+                        latency_breakdown = {
+                            "audio_buffer_ms": audio_buffer_ms,
+                            "inference_ms": inference_ms,
+                            "speaker_verification_ms": speaker_verification_ms,
+                            "total_ms": total_ms,
+                        }
 
                         # 5. Broadcast Telemetry Packet to Client
                         packet = TelemetryPacket(
@@ -596,18 +610,20 @@ async def websocket_live_call(
                                 speaker_status=speaker_status,
                                 buffer_energy_rms=round(rms_energy, 4),
                                 vad_speech_ratio=round(speech_ratio, 4),
-                                latency_ms=latency_ms,
+                                latency_ms=total_ms,
                             ),
                             recommended_action=recommended_action,
                             mfa_status=mfa_status,
                             status="success",
                             pipeline_status="ANALYZING",
                             speaker_status=speaker_status,
+                            latency=latency_breakdown,
                         )
 
                         packet_dict = packet.model_dump()
                         packet_dict["type"] = "analysis"
                         packet_dict["session_id"] = session_id
+                        packet_dict["latency"] = latency_breakdown
                         packet_dict["anti_spoof"] = {
                             "score": round(spoof_prob, 4),
                         }

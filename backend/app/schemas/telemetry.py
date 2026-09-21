@@ -71,6 +71,9 @@ class TelemetryPacket(BaseModel):
     speaker_status: Optional[str] = Field(
         default="NO_VOICEPRINT", description="Speaker verification state"
     )
+    latency: Optional[Dict[str, float]] = Field(
+        default=None, description="Detailed stage latency breakdown in milliseconds"
+    )
 
 
 class SpeakerEnrollRequest(BaseModel):
