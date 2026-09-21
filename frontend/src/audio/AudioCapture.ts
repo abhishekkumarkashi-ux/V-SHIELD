@@ -18,6 +18,9 @@ export interface AudioDebugInfo {
   chunkDurationMs: number;
   rmsVolume: number;
   isWorklet: boolean;
+  microphoneStatus: 'IDLE' | 'REQUESTING' | 'ACTIVE' | 'MICROPHONE_PERMISSION_REQUIRED' | 'ERROR';
+  chunksSent: number;
+  bytesSent: number;
 }
 
 export interface AudioCaptureOptions {
@@ -70,6 +73,14 @@ export class AudioCapture {
   private isRunning: boolean = false;
   private isWorkletActive: boolean = false;
   private resampleBuffer: Float32Array = new Float32Array(0);
+  private chunksSent: number = 0;
+  private bytesSent: number = 0;
+  private microphoneStatus:
+    | 'IDLE'
+    | 'REQUESTING'
+    | 'ACTIVE'
+    | 'MICROPHONE_PERMISSION_REQUIRED'
+    | 'ERROR' = 'IDLE';
 
   constructor(options: AudioCaptureOptions) {
     this.targetSampleRate = options.targetSampleRate || 16000;
@@ -83,16 +94,28 @@ export class AudioCapture {
       return this.getDebugInfo(0);
     }
 
-    // 1. Request microphone access (mono, standard voice constraints)
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: false,
-        autoGainControl: true,
-      },
-    });
-    this.mediaStream = stream;
+    this.microphoneStatus = 'REQUESTING';
+    let stream: MediaStream;
+    try {
+      // 1. Request microphone access (mono, standard voice constraints)
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: true,
+        },
+      });
+      this.mediaStream = stream;
+      this.microphoneStatus = 'ACTIVE';
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        this.microphoneStatus = 'MICROPHONE_PERMISSION_REQUIRED';
+      } else {
+        this.microphoneStatus = 'ERROR';
+      }
+      throw err;
+    }
 
     // 2. Initialize AudioContext (let browser select native hardware rate to avoid clock drift)
     const AudioContextClass =
@@ -192,6 +215,8 @@ export class AudioCapture {
       const rms = Math.sqrt(sumSq / chunk.length);
 
       this.onVolumeChange?.(rms);
+      this.chunksSent += 1;
+      this.bytesSent += chunk.buffer.byteLength;
 
       const debug = this.getDebugInfo(rms);
       // Emit raw Float32Array buffer
@@ -209,11 +234,15 @@ export class AudioCapture {
       chunkDurationMs: Math.round((this.chunkSamples / this.targetSampleRate) * 1000),
       rmsVolume: currentRms,
       isWorklet: this.isWorkletActive,
+      microphoneStatus: this.microphoneStatus,
+      chunksSent: this.chunksSent,
+      bytesSent: this.bytesSent,
     };
   }
 
   public stop(): void {
     this.isRunning = false;
+    this.microphoneStatus = 'IDLE';
     this.resampleBuffer = new Float32Array(0);
 
     if (this.workletNode) {

@@ -101,7 +101,7 @@ export async function ensureAuthToken(): Promise<string> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: 'analyst@vshield.internal',
-          password: 'VShieldSecure2026!',
+          password: 'VShieldDev2026!',
         }),
       });
     } catch {
@@ -110,7 +110,7 @@ export async function ensureAuthToken(): Promise<string> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: 'analyst@vshield.internal',
-          password: 'VShieldSecure2026!',
+          password: 'VShieldDev2026!',
         }),
       });
     }

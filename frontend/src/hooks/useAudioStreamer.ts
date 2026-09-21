@@ -85,6 +85,9 @@ export function useAudioStreamer({
         chunkDurationMs: Math.round((chunkSize / targetSampleRate) * 1000),
         rmsVolume: 0.25,
         isWorklet: false,
+        microphoneStatus: 'IDLE',
+        chunksSent: 0,
+        bytesSent: 0,
       };
       setDebugInfo(simDebug);
 

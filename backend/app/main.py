@@ -137,6 +137,7 @@ async def startup_event() -> None:
 
 @app.get("/health", response_model=SystemHealthResponse)
 @app.get("/api/health", response_model=SystemHealthResponse)
+@app.get("/api/v1/health", response_model=SystemHealthResponse)
 async def get_health() -> SystemHealthResponse:
     """Returns platform operational readiness, device, and truthful model statuses."""
     aasist_ready = bool(aasist_service.is_onnx_loaded or aasist_service.is_loaded)

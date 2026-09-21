@@ -148,9 +148,20 @@ export const App: React.FC = () => {
     startSession();
     try {
       await startStreaming();
-    } catch {
-      // If mic fails, trigger simulated genuine stream
-      startSimulation('genuine');
+    } catch (err: any) {
+      if (
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        err?.message?.includes('denied') ||
+        err?.message?.includes('Permission')
+      ) {
+        setAlertMessage(
+          'MICROPHONE_PERMISSION_REQUIRED: Please grant microphone permission in your browser to enable live voice analysis.'
+        );
+      } else {
+        setAlertMessage(`Microphone Initialization Failed: ${err?.message || 'Device error'}`);
+      }
+      stopSession();
     }
   };
 
@@ -544,10 +555,14 @@ export const App: React.FC = () => {
                   </div>
                 ) : (
                   history.map((pkt, idx) => {
-                    const h = Math.max(6, Math.min(100, pkt.risk_score));
-                    const isHigh = pkt.risk_score >= 70;
-                    const isMed = pkt.risk_score >= 31 && pkt.risk_score < 70;
-                    const barColor = isHigh
+                    const score = pkt.risk_score ?? 0;
+                    const isNull = pkt.risk_score === null;
+                    const h = isNull ? 6 : Math.max(6, Math.min(100, score));
+                    const isHigh = !isNull && score >= 70;
+                    const isMed = !isNull && score >= 31 && score < 70;
+                    const barColor = isNull
+                      ? 'bg-slate-700'
+                      : isHigh
                       ? 'bg-red-500 shadow-sm shadow-red-500'
                       : isMed
                       ? 'bg-amber-500'
@@ -564,7 +579,7 @@ export const App: React.FC = () => {
                         />
                         {/* Tooltip on hover */}
                         <div className="hidden group-hover:block absolute -top-8 bg-slate-900 border border-slate-700 text-[10px] font-mono px-2 py-0.5 rounded text-white z-20 whitespace-nowrap pointer-events-none">
-                          Risk: {pkt.risk_score.toFixed(1)}
+                          Risk: {pkt.risk_score !== null ? pkt.risk_score.toFixed(1) : 'N/A (Priming)'}
                         </div>
                       </div>
                     );

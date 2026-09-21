@@ -11,7 +11,7 @@ export interface TelemetryMetrics {
 
 export interface TelemetryPacket {
   timestamp: number;
-  risk_score: number;
+  risk_score: number | null;
   classification: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'INSUFFICIENT_DATA';
   call_sid?: string;
   stream_sid?: string;
@@ -200,7 +200,10 @@ export function useVShieldSocket({
             }
 
             // Route standard telemetry analysis packets
-            if (typeof data.risk_score === 'number' && data.metrics) {
+            if (
+              (typeof data.risk_score === 'number' || data.risk_score === null) &&
+              (data.type === 'analysis' || data.metrics)
+            ) {
               const packet: TelemetryPacket = data;
               if (packet.call_sid) {
                 setActiveCallSid(packet.call_sid);
