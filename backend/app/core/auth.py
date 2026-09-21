@@ -171,53 +171,81 @@ def _verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
-# Generate static salts & hashes for pre-seeded operator accounts
+# Static salts for operator accounts
 _SALT_ANALYST = b"vshield_salt_analyst_2026"
 _SALT_OPERATOR = b"vshield_salt_operator_2026"
 _SALT_ADMIN = b"vshield_salt_admin_2026"
 
-USERS_DB: Dict[str, Dict[str, Any]] = {
-    settings.DEMO_OPERATOR_USERNAME: {
-        "user_id": "usr_analyst_01",
-        "username": settings.DEMO_OPERATOR_USERNAME,
-        "name": "Security Operations Lead",
-        "role": "analyst",
-        "password_hash": _hash_password(settings.DEMO_OPERATOR_PASSWORD, _SALT_ANALYST),
-        "is_active": True,
-    },
-    "operator@vshield.internal": {
-        "user_id": "usr_operator_01",
-        "username": "operator@vshield.internal",
-        "name": "Fraud Detection Operator",
-        "role": "operator",
-        "password_hash": _hash_password("VShieldSecure2026!", _SALT_OPERATOR),
-        "is_active": True,
-    },
-    "operator": {
-        "user_id": "usr_operator_02",
-        "username": "operator",
-        "name": "Local Console Operator",
-        "role": "operator",
-        "password_hash": _hash_password("vshield", _SALT_OPERATOR),
-        "is_active": True,
-    },
-    "analyst": {
-        "user_id": "usr_analyst_02",
-        "username": "analyst",
-        "name": "Local Console Analyst",
-        "role": "analyst",
-        "password_hash": _hash_password("vshield", _SALT_ANALYST),
-        "is_active": True,
-    },
-    "admin@vshield.internal": {
-        "user_id": "usr_admin_01",
-        "username": "admin@vshield.internal",
-        "name": "Platform Administrator",
-        "role": "admin",
-        "password_hash": _hash_password("VShieldAdmin2026!", _SALT_ADMIN),
-        "is_active": True,
-    },
-}
+
+def _build_users_db() -> Dict[str, Dict[str, Any]]:
+    """
+    Constructs the authorized user registry.
+    Primary operator credentials originate from environment configuration.
+    Development-only convenience accounts are excluded in production.
+    """
+    db: Dict[str, Dict[str, Any]] = {
+        settings.DEMO_OPERATOR_USERNAME: {
+            "user_id": "usr_analyst_01",
+            "username": settings.DEMO_OPERATOR_USERNAME,
+            "name": "Security Operations Lead",
+            "role": "analyst",
+            "password_hash": _hash_password(
+                settings.DEMO_OPERATOR_PASSWORD or "VShieldDev2026!", _SALT_ANALYST
+            ),
+            "is_active": True,
+        }
+    }
+
+    # Only permit supplementary development operator accounts in non-production environments
+    if settings.ENVIRONMENT.lower() not in ("production", "prod"):
+        dev_accounts = {
+            "operator@vshield.internal": {
+                "user_id": "usr_operator_01",
+                "username": "operator@vshield.internal",
+                "name": "Fraud Detection Operator",
+                "role": "operator",
+                "password_hash": _hash_password(
+                    settings.DEMO_OPERATOR_PASSWORD or "VShieldDev2026!", _SALT_OPERATOR
+                ),
+                "is_active": True,
+            },
+            "operator": {
+                "user_id": "usr_operator_02",
+                "username": "operator",
+                "name": "Local Console Operator",
+                "role": "operator",
+                "password_hash": _hash_password(
+                    settings.DEMO_OPERATOR_PASSWORD or "VShieldDev2026!", _SALT_OPERATOR
+                ),
+                "is_active": True,
+            },
+            "analyst": {
+                "user_id": "usr_analyst_02",
+                "username": "analyst",
+                "name": "Local Console Analyst",
+                "role": "analyst",
+                "password_hash": _hash_password(
+                    settings.DEMO_OPERATOR_PASSWORD or "VShieldDev2026!", _SALT_ANALYST
+                ),
+                "is_active": True,
+            },
+            "admin@vshield.internal": {
+                "user_id": "usr_admin_01",
+                "username": "admin@vshield.internal",
+                "name": "Platform Administrator",
+                "role": "admin",
+                "password_hash": _hash_password(
+                    settings.DEMO_OPERATOR_PASSWORD or "VShieldDev2026!", _SALT_ADMIN
+                ),
+                "is_active": True,
+            },
+        }
+        db.update(dev_accounts)
+
+    return db
+
+
+USERS_DB: Dict[str, Dict[str, Any]] = _build_users_db()
 
 
 def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:

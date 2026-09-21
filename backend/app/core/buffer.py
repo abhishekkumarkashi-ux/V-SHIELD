@@ -218,3 +218,14 @@ class AudioCircularBuffer:
     def total_samples(self) -> int:
         with self._lock:
             return self._total_samples_written
+
+    @property
+    def buffered_seconds(self) -> float:
+        with self._lock:
+            return round(
+                min(self._total_samples_written, self.capacity) / self.target_sample_rate, 3
+            )
+
+    @property
+    def required_seconds(self) -> float:
+        return round(self.capacity / self.target_sample_rate, 3)

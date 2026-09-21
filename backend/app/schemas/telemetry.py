@@ -37,14 +37,18 @@ class TelemetryMetrics(BaseModel):
 
 class TelemetryPacket(BaseModel):
     timestamp: float = Field(..., description="Unix epoch timestamp in seconds")
-    risk_score: float = Field(
-        ..., ge=0.0, le=100.0, description="Multi-signal fused risk score (0-100)"
+    risk_score: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=100.0,
+        description="Multi-signal fused risk score (0-100), or None during insufficient data or warmup",
     )
     classification: Literal["LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "INSUFFICIENT_DATA"] = Field(
         ..., description="Tri-tier threat level or insufficient data state"
     )
     decision: Optional[str] = Field(
-        default=None, description="Explainable decision status (e.g. LOW_RISK, ELEVATED_RISK, HIGH_RISK, INSUFFICIENT_DATA)"
+        default=None,
+        description="Explainable decision status (e.g. LOW_RISK, ELEVATED_RISK, HIGH_RISK, INSUFFICIENT_DATA)",
     )
     factors: Optional[List[Dict[str, Any]]] = Field(
         default=None, description="Explainable multi-signal risk breakdown factors"
@@ -177,8 +181,18 @@ class AudioMetricsPacket(BaseModel):
     rms: float = Field(..., description="RMS volume level")
     peak: float = Field(..., description="Peak amplitude")
     pipeline_status: Optional[str] = Field(
-        default=None, description="Current audio pipeline state ('LISTENING', 'WAITING_FOR_AUDIO', etc.)"
+        default=None,
+        description="Current audio pipeline state ('LISTENING', 'WAITING_FOR_AUDIO', 'WARMING_UP', etc.)",
     )
     speech_state: Optional[str] = Field(
         default=None, description="Acoustic VAD state on chunk ('SPEECH' or 'SILENCE')"
+    )
+    status: Optional[str] = Field(
+        default=None, description="Pipeline status indicator (e.g. 'warming_up', 'listening')"
+    )
+    buffered_seconds: Optional[float] = Field(
+        default=None, description="Buffered audio accumulation in seconds"
+    )
+    required_seconds: Optional[float] = Field(
+        default=None, description="Required seconds for full inference window"
     )

@@ -12,7 +12,6 @@ Verifies:
 9. Resilient error handling (malformed JSON, invalid base64, clean disconnect).
 """
 
-import asyncio
 import audioop
 import base64
 import json
@@ -20,25 +19,16 @@ import time
 
 import numpy as np
 import pytest
-import torch
-from fastapi.testclient import TestClient
-from twilio.request_validator import RequestValidator
-
 from app.config import settings
 from app.core.buffer import AudioCircularBuffer
-from app.core.risk_engine import RiskEngine
-from app.core.vad import MarginPreservingVAD
 from app.main import app
-from app.models.aasist_service import AASISTService
 from app.models.ecapa_service import ECAPAService
 from app.routers.twilio import (
     CallSessionState,
-    broadcast_telemetry,
     call_states,
-    get_call_state,
-    register_dashboard_subscriber,
-    unregister_dashboard_subscriber,
 )
+from fastapi.testclient import TestClient
+from twilio.request_validator import RequestValidator
 
 
 @pytest.fixture
@@ -47,7 +37,9 @@ def client():
         yield c
 
 
-def generate_synthetic_ulaw_chunk(num_samples: int = 160, freq: float = 440.0, sr: int = 8000) -> bytes:
+def generate_synthetic_ulaw_chunk(
+    num_samples: int = 160, freq: float = 440.0, sr: int = 8000
+) -> bytes:
     """Generates 8 kHz sine wave, normalizes to 16-bit PCM, and encodes to μ-law."""
     t = np.linspace(0, num_samples / sr, num_samples, endpoint=False)
     sine = 0.5 * np.sin(2 * np.pi * freq * t)
@@ -192,7 +184,7 @@ def test_sliding_window_requires_full_window_before_first_hop():
     buf = AudioCircularBuffer(capacity=64600, hop_size=8000, target_sample_rate=16000)
 
     # Feed 200 chunks of 20ms (320 samples @ 16kHz = 64,000 samples < 64,600)
-    chunk_320 = (generate_synthetic_ulaw_chunk(160))
+    chunk_320 = generate_synthetic_ulaw_chunk(160)
     pcm320 = audioop.ulaw2lin(chunk_320, 2)
 
     for _ in range(200):
@@ -228,7 +220,9 @@ def test_unenrolled_caller_returns_no_reference_biometric_state():
     state = CallSessionState("CA_UNENROLLED", "MZ_UNENROLLED", target_speaker_id=None)
 
     # 1. ECAPA service returns NO_VOICEPRINT for unenrolled
-    spk_verif = ECAPAService.get_instance().verify_speaker_detailed(np.zeros(16000, dtype=np.float32), None)
+    spk_verif = ECAPAService.get_instance().verify_speaker_detailed(
+        np.zeros(16000, dtype=np.float32), None
+    )
     assert spk_verif["status"] in ("NO_VOICEPRINT", "NO_REFERENCE")
     assert spk_verif["similarity"] is None
 

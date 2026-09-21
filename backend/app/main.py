@@ -72,8 +72,10 @@ from app.routers.mfa import router as mfa_router
 from app.routers.twilio import (
     handle_twilio_stream_session,
     register_dashboard_subscriber,
-    router as twilio_router,
     unregister_dashboard_subscriber,
+)
+from app.routers.twilio import (
+    router as twilio_router,
 )
 
 app.include_router(analyze_router, prefix="/api/v1")
@@ -241,13 +243,7 @@ async def websocket_live_call(
     Sends: Structured JSON TelemetryPacket / Session status events.
     Enforces authentication and active session state checks.
     """
-    await websocket.accept()
-    await register_dashboard_subscriber(websocket)
-    session_id = f"sess_{int(time.time() * 1000)}"
-    endpoint_path = sanitize_url_for_logging(websocket.url.path)
-    print(f"[WS] Client connected to {endpoint_path} (session={session_id})")
-
-    # Extract potential authentication token
+    # Extract candidate authentication token
     auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
     header_token = None
     if auth_header and auth_header.strip().lower().startswith("bearer "):
@@ -277,31 +273,44 @@ async def websocket_live_call(
         try:
             authenticated_user = verify_access_token(candidate_token)
         except TokenExpiredError:
+            await websocket.accept()
             await websocket.send_text(
                 json.dumps(
                     {
                         "type": "auth_error",
                         "error": "expired session",
                         "code": "EXPIRED_SESSION",
-                        "message": "Authentication token has expired. Re-authentication required.",
+                        "message": "Authentication required: token has expired.",
                     }
                 )
             )
             await websocket.close(code=1008)
             return
         except Exception:
+            await websocket.accept()
             await websocket.send_text(
                 json.dumps(
                     {
                         "type": "auth_error",
                         "error": "unauthorized",
                         "code": "UNAUTHORIZED",
-                        "message": "Invalid authentication credentials.",
+                        "message": "Authentication required: invalid credentials.",
                     }
                 )
             )
             await websocket.close(code=1008)
             return
+
+    await websocket.accept()
+    await register_dashboard_subscriber(websocket)
+    session_id = f"sess_{int(time.time() * 1000)}"
+    endpoint_path = sanitize_url_for_logging(websocket.url.path)
+    if authenticated_user:
+        print(f"[WS] Authenticated client connected to {endpoint_path} (session={session_id})")
+    else:
+        print(
+            f"[WS] Client connected to {endpoint_path} awaiting in-band auth (session={session_id})"
+        )
 
     # Create dedicated per-session audio buffer, VAD, and risk state
     buffer = AudioCircularBuffer(
@@ -325,11 +334,12 @@ async def websocket_live_call(
         if authenticated_user
         else "unauthenticated"
     )
+    user_role = authenticated_user.get("role", "operator") if authenticated_user else "guest"
     analysis_session = AnalysisSession(
         session_id=session_id,
         user_id=user_id,
         username=username,
-        role=authenticated_user.get("role", "operator") if authenticated_user else "none",
+        role=user_role,
         max_duration_sec=float(settings.SESSION_MAX_DURATION_SECONDS),
         idle_timeout_sec=float(settings.SESSION_IDLE_TIMEOUT_SECONDS),
     )
@@ -338,6 +348,7 @@ async def websocket_live_call(
     active_target_phone = target_phone or settings.DEFAULT_MFA_TARGET_PHONE
     active_audio_format = None
     pipeline_state = "READY"
+    consecutive_high_risk_windows = 0
     last_metrics_report_time = 0.0
 
     try:
@@ -578,18 +589,25 @@ async def websocket_live_call(
                         classification = risk_eval["classification"]
                         recommended_action = risk_eval["recommended_action"]
 
-                        # 4b. Layer 5 Automated Out-of-Band MFA Dispatch with Sliding Cooldown
+                        # 4b. Layer 5 Automated Out-of-Band MFA Dispatch with Sliding Cooldown & Debounce Policy
                         mfa_status = "NONE"
                         if RiskEngine.should_trigger_mfa(risk_score, recommended_action):
-                            mfa_res = await mfa_service.dispatch_mfa_challenge(
-                                target_id=active_speaker_id or "session",
-                                phone_number=active_target_phone,
-                            )
-                            status_val = mfa_res.get("status")
-                            if status_val == "dispatched":
-                                mfa_status = "DISPATCHED"
-                            elif status_val == "cooldown_active":
-                                mfa_status = "COOLDOWN"
+                            consecutive_high_risk_windows += 1
+                            is_high_confidence = (
+                                spoof_prob is not None and spoof_prob >= 0.80
+                            ) or (risk_score is not None and risk_score >= 75.0)
+                            if is_high_confidence or consecutive_high_risk_windows >= 2:
+                                mfa_res = await mfa_service.dispatch_mfa_challenge(
+                                    target_id=active_speaker_id or session_id,
+                                    phone_number=active_target_phone,
+                                )
+                                status_val = mfa_res.get("status")
+                                if status_val == "dispatched":
+                                    mfa_status = "DISPATCHED"
+                                elif status_val == "cooldown_active":
+                                    mfa_status = "COOLDOWN"
+                        else:
+                            consecutive_high_risk_windows = 0
 
                         rms_energy = buffer.get_current_rms()
                         total_ms = round((time.perf_counter() - t_start) * 1000.0, 2)
@@ -633,23 +651,29 @@ async def websocket_live_call(
                         packet_dict["latency"] = latency_breakdown
                         packet_dict["anti_spoof"] = {
                             "score": round(spoof_prob, 4),
+                            "label": (
+                                "BONA_FIDE"
+                                if spoof_prob < settings.SPOOF_DECISION_THRESHOLD
+                                else "SPOOF"
+                            ),
+                            "latency_ms": inference_ms,
                         }
                         packet_dict["risk"] = {
-                            "score": round(risk_score, 2),
+                            "score": round(risk_score, 2) if risk_score is not None else None,
                             "decision": risk_eval["decision"],
                             "factors": risk_eval["factors"],
                         }
-                        packet_dict["speaker"] = {
-                            "status": speaker_status,
+                        packet_dict["speaker_verification"] = {
+                            "speaker_id": active_speaker_id,
                             "similarity": (
                                 round(speaker_similarity, 4)
                                 if speaker_similarity is not None
                                 else None
                             ),
-                            "speaker_id": active_speaker_id,
-                            "is_match": spk_verif["is_match"],
-                            "has_voiceprint": spk_verif["has_voiceprint"],
+                            "status": speaker_status,
+                            "latency_ms": speaker_verification_ms,
                         }
+
                         await websocket.send_text(json.dumps(packet_dict))
                     except Exception as model_err:
                         pipeline_state = "ANALYSIS_ERROR"
@@ -682,8 +706,24 @@ async def websocket_live_call(
                         peak=round(chunk_peak, 4),
                         pipeline_status=pipeline_state,
                         speech_state=chunk_speech_diag["state"],
+                        status="warming_up" if not buffer.is_primed else "listening",
+                        buffered_seconds=(
+                            buffer.buffered_seconds if not buffer.is_primed else None
+                        ),
+                        required_seconds=(
+                            buffer.required_seconds if not buffer.is_primed else None
+                        ),
                     )
                     await websocket.send_text(json.dumps(metrics_packet.model_dump()))
+
+                # Development-mode structured telemetry logging
+                if settings.DEBUG:
+                    print(
+                        f"[DEV LOG] session={session_id} received_samples={sample_count} "
+                        f"buffer_samples={min(buffer.total_samples, buffer.capacity)} "
+                        f"window_samples={settings.WINDOW_SIZE} hop_samples={settings.HOP_SIZE} "
+                        f"state={pipeline_state}"
+                    )
 
             elif "text" in message and message["text"]:
                 try:

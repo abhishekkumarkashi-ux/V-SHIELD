@@ -137,10 +137,32 @@ class RiskEngine:
           A call is NEVER marked safe merely due to lack of model telemetry.
         """
         # Insufficient data guard:
-        has_audio_evidence = (
-            spoof_prob is not None
-            and not (not is_speech_active and speech_ratio is not None and speech_ratio <= 0.0 and self._current_ema is None)
+        has_audio_evidence = spoof_prob is not None and not (
+            not is_speech_active
+            and speech_ratio is not None
+            and speech_ratio <= 0.0
+            and self._current_ema is None
         )
+
+        if spoof_prob is None:
+            factors: List[Dict[str, Any]] = [
+                {
+                    "name": "model_status",
+                    "value": "unavailable",
+                    "contribution": 0.0,
+                    "description": "Anti-spoofing model telemetry unavailable.",
+                }
+            ]
+            result = {
+                "risk_score": None,
+                "model_status": "unavailable",
+                "decision": "INSUFFICIENT_DATA",
+                "classification": "INSUFFICIENT_DATA",
+                "recommended_action": "MONITOR",
+                "factors": factors,
+            }
+            self.last_explanation = result
+            return result
 
         if not has_audio_evidence:
             factors: List[Dict[str, Any]] = [
@@ -153,6 +175,7 @@ class RiskEngine:
             ]
             result = {
                 "risk_score": 0.0,
+                "model_status": "ready",
                 "decision": "INSUFFICIENT_DATA",
                 "classification": "INSUFFICIENT_DATA",
                 "recommended_action": "MONITOR",
@@ -171,7 +194,9 @@ class RiskEngine:
         if self._current_ema is None:
             self._current_ema = instant_risk
         else:
-            self._current_ema = (self.alpha * instant_risk) + ((1.0 - self.alpha) * self._current_ema)
+            self._current_ema = (self.alpha * instant_risk) + (
+                (1.0 - self.alpha) * self._current_ema
+            )
 
         final_score = round(self._current_ema, 1)
 
@@ -207,21 +232,33 @@ class RiskEngine:
 
             spoof_contribution = round(final_score * spoof_pct, 1)
             if spoof_prob > 0.65:
-                spoof_desc = f"Synthetic/deepfake voice features detected (P(spoof) = {spoof_prob:.3f})"
+                spoof_desc = (
+                    f"Synthetic/deepfake voice features detected (P(spoof) = {spoof_prob:.3f})"
+                )
             elif spoof_prob < 0.30:
-                spoof_desc = f"Natural human vocal tract acoustics verified (P(spoof) = {spoof_prob:.3f})"
+                spoof_desc = (
+                    f"Natural human vocal tract acoustics verified (P(spoof) = {spoof_prob:.3f})"
+                )
             else:
-                spoof_desc = f"Suspicious or degraded vocal characteristics (P(spoof) = {spoof_prob:.3f})"
+                spoof_desc = (
+                    f"Suspicious or degraded vocal characteristics (P(spoof) = {spoof_prob:.3f})"
+                )
 
-            factors.append({
-                "name": "anti_spoof",
-                "value": round(float(spoof_prob), 4),
-                "contribution": spoof_contribution,
-                "description": spoof_desc,
-            })
+            factors.append(
+                {
+                    "name": "anti_spoof",
+                    "value": round(float(spoof_prob), 4),
+                    "contribution": spoof_contribution,
+                    "description": spoof_desc,
+                }
+            )
 
         if speaker_similarity is not None:
-            bio_contribution = round(final_score - factors[0]["contribution"], 1) if factors else round(final_score, 1)
+            bio_contribution = (
+                round(final_score - factors[0]["contribution"], 1)
+                if factors
+                else round(final_score, 1)
+            )
             if speaker_similarity >= 0.70:
                 bio_desc = f"Voice biometric profile matched with enrolled caller (sim = {speaker_similarity:.3f})"
             elif speaker_similarity <= 0.40:
@@ -229,27 +266,39 @@ class RiskEngine:
             else:
                 bio_desc = f"Biometric voiceprint intermediate / evaluating (sim = {speaker_similarity:.3f})"
 
-            factors.append({
-                "name": "speaker_similarity",
-                "value": round(float(speaker_similarity), 4),
-                "contribution": max(0.0, bio_contribution),
-                "description": bio_desc,
-            })
+            factors.append(
+                {
+                    "name": "speaker_similarity",
+                    "value": round(float(speaker_similarity), 4),
+                    "contribution": max(0.0, bio_contribution),
+                    "description": bio_desc,
+                }
+            )
         else:
-            factors.append({
-                "name": "speaker_similarity",
-                "value": None,
-                "contribution": 0.0,
-                "description": "No enrolled voiceprint profile; risk evaluated from anti-spoof only.",
-            })
+            factors.append(
+                {
+                    "name": "speaker_similarity",
+                    "value": None,
+                    "contribution": 0.0,
+                    "description": "No enrolled voiceprint profile; risk evaluated from anti-spoof only.",
+                }
+            )
 
-        activity_ratio = speech_ratio if speech_ratio is not None else (1.0 if is_speech_active else 0.0)
-        factors.append({
-            "name": "speech_activity",
-            "value": round(activity_ratio, 2),
-            "contribution": 0.0,
-            "description": "Active voice frames detected" if is_speech_active else "Low speech activity / ambient silence",
-        })
+        activity_ratio = (
+            speech_ratio if speech_ratio is not None else (1.0 if is_speech_active else 0.0)
+        )
+        factors.append(
+            {
+                "name": "speech_activity",
+                "value": round(activity_ratio, 2),
+                "contribution": 0.0,
+                "description": (
+                    "Active voice frames detected"
+                    if is_speech_active
+                    else "Low speech activity / ambient silence"
+                ),
+            }
+        )
 
         result = {
             "risk_score": final_score,
@@ -282,11 +331,13 @@ class RiskEngine:
         return detailed["risk_score"], detailed["classification"], detailed["recommended_action"]
 
     @staticmethod
-    def should_trigger_mfa(risk_score: float, recommended_action: str) -> bool:
+    def should_trigger_mfa(risk_score: Optional[float], recommended_action: str) -> bool:
         """
         Determines whether the current telemetry window should trigger an out-of-band MFA challenge.
         Fires on explicit TRIGGER_MFA_CALLBACK recommendation or Risk Score >= 75.0.
         """
+        if risk_score is None:
+            return False
         return (recommended_action == "TRIGGER_MFA_CALLBACK") or (risk_score >= 75.0)
 
     def classify_static_file(

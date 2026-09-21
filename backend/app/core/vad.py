@@ -28,7 +28,9 @@ class MarginPreservingVAD:
         self.sample_rate: int = sample_rate
         self.frame_len: int = int(sample_rate * (frame_duration_ms / 1000.0))  # 400 samples @ 16kHz
         self.energy_threshold: float = energy_threshold
-        self.margin_samples: int = int(sample_rate * min_silence_padding_sec)  # 4,800 samples @ 16kHz
+        self.margin_samples: int = int(
+            sample_rate * min_silence_padding_sec
+        )  # 4,800 samples @ 16kHz
         self.min_speech_duration_ms: int = min_speech_duration_ms
         self.min_speech_frames: int = max(
             1, int(round((min_speech_duration_ms / 1000.0) / (frame_duration_ms / 1000.0)))
@@ -92,9 +94,7 @@ class MarginPreservingVAD:
 
         return expanded_mask
 
-    def analyze_speech(
-        self, audio: Union[np.ndarray, torch.Tensor]
-    ) -> dict:
+    def analyze_speech(self, audio: Union[np.ndarray, torch.Tensor]) -> dict:
         """
         Computes detailed acoustic and VAD metrics for diagnostics, logs, and telemetry.
         Distinguishes SPEECH from SILENCE with frame-level resolution.
@@ -121,7 +121,9 @@ class MarginPreservingVAD:
             "peak_frame_rms": round(float(np.max(energies)), 6) if len(energies) > 0 else 0.0,
             "active_frames_count": active_frames,
             "total_frames_count": total_frames,
-            "speech_duration_ms": round((active_frames * self.frame_len / self.sample_rate) * 1000.0, 2),
+            "speech_duration_ms": round(
+                (active_frames * self.frame_len / self.sample_rate) * 1000.0, 2
+            ),
             "energy_threshold": self.energy_threshold,
             "sample_rate": self.sample_rate,
             "frame_len": self.frame_len,

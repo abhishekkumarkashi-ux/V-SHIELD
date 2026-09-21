@@ -8,16 +8,22 @@ Handles:
 """
 
 import asyncio
+import audioop
 import base64
 import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urlparse
 
-import audioop
-import numpy as np
-from fastapi import APIRouter, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 
@@ -28,9 +34,9 @@ from app.core.risk_engine import RiskEngine
 from app.core.vad import MarginPreservingVAD
 from app.models.aasist_service import AASISTService
 from app.models.ecapa_service import ECAPAService
-from app.schemas.telemetry import TelemetryMetrics, TelemetryPacket
 
 logger = logging.getLogger("vshield.twilio")
+
 router = APIRouter(prefix="/twilio", tags=["Twilio Live Call Gateway"])
 
 # Global singletons
@@ -189,7 +195,9 @@ async def twilio_voice_webhook(
     from_phone = params.get("From", "UNKNOWN")
     to_phone = params.get("To", "UNKNOWN")
 
-    logger.info(f"[TWILIO] Incoming call received: CallSid={call_sid}, From={from_phone}, To={to_phone}")
+    logger.info(
+        f"[TWILIO] Incoming call received: CallSid={call_sid}, From={from_phone}, To={to_phone}"
+    )
     print(f"[TWILIO] call started: CallSid={call_sid} From={from_phone} To={to_phone}")
 
     # Twilio Request Signature Validation (Phase 14)
@@ -199,7 +207,9 @@ async def twilio_voice_webhook(
         # Check signature against request URL and POST parameters
         is_valid = validator.validate(full_url, params, x_twilio_signature or "")
         if not is_valid:
-            logger.warning(f"[TWILIO Security] Rejected unauthorized webhook call: CallSid={call_sid}")
+            logger.warning(
+                f"[TWILIO Security] Rejected unauthorized webhook call: CallSid={call_sid}"
+            )
             raise HTTPException(status_code=403, detail="Twilio signature validation failed.")
 
     # Generate TwiML response instructing Twilio to stream audio to /ws/twilio-stream
@@ -257,8 +267,12 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
             # -------------------------------------------------------------
             if event_type == "start":
                 start_data = msg.get("start", {})
-                current_stream_sid = start_data.get("streamSid") or msg.get("streamSid", "UNKNOWN_STREAM")
-                current_call_sid = start_data.get("callSid") or msg.get("callSid", f"call_{int(time.time()*1000)}")
+                current_stream_sid = start_data.get("streamSid") or msg.get(
+                    "streamSid", "UNKNOWN_STREAM"
+                )
+                current_call_sid = start_data.get("callSid") or msg.get(
+                    "callSid", f"call_{int(time.time()*1000)}"
+                )
 
                 custom_params = start_data.get("customParameters", {})
                 caller_phone = custom_params.get("caller_phone") or custom_params.get("From")
@@ -273,8 +287,12 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                 )
                 call_states[current_call_sid] = state
 
-                logger.info(f"[TWILIO] stream started: call_sid={current_call_sid} stream_sid={current_stream_sid}")
-                print(f"[TWILIO] stream started: call_sid={current_call_sid} stream_sid={current_stream_sid}")
+                logger.info(
+                    f"[TWILIO] stream started: call_sid={current_call_sid} stream_sid={current_stream_sid}"
+                )
+                print(
+                    f"[TWILIO] stream started: call_sid={current_call_sid} stream_sid={current_stream_sid}"
+                )
 
                 # Broadcast Call Started event to dashboard
                 await broadcast_telemetry(
@@ -341,7 +359,9 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                     try:
                         # 4a. Margin-Preserving Voice Activity Detection (Phase 7)
                         t_vad_start = time.perf_counter()
-                        is_speech_active, speech_ratio, safe_audio = state.vad.process_window(window_tensor)
+                        is_speech_active, speech_ratio, safe_audio = state.vad.process_window(
+                            window_tensor
+                        )
                         audio_buffer_ms = round((time.perf_counter() - t_vad_start) * 1000.0, 2)
 
                         # 4b. AASIST Anti-Spoofing Inference (Phase 8)
@@ -353,7 +373,9 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                         t_spk_start = time.perf_counter()
                         target_spk = state.target_speaker_id
                         if target_spk:
-                            spk_verif = ecapa_service.verify_speaker_detailed(safe_audio, target_spk)
+                            spk_verif = ecapa_service.verify_speaker_detailed(
+                                safe_audio, target_spk
+                            )
                             speaker_similarity = spk_verif["similarity"]
                             speaker_status = spk_verif["status"]
                         else:
@@ -367,7 +389,9 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                                 "is_match": False,
                                 "has_voiceprint": False,
                             }
-                        speaker_verification_ms = round((time.perf_counter() - t_spk_start) * 1000.0, 2)
+                        speaker_verification_ms = round(
+                            (time.perf_counter() - t_spk_start) * 1000.0, 2
+                        )
 
                         # 4d. Authoritative Multi-Signal Risk Engine Evaluation (Phase 10)
                         risk_eval = state.risk_engine.evaluate_detailed(
@@ -422,7 +446,9 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                             "metrics": {
                                 "spoof_probability": round(spoof_prob, 4),
                                 "speaker_similarity": (
-                                    round(speaker_similarity, 4) if speaker_similarity is not None else None
+                                    round(speaker_similarity, 4)
+                                    if speaker_similarity is not None
+                                    else None
                                 ),
                                 "speaker_status": speaker_status,
                                 "buffer_energy_rms": round(rms_energy, 4),
@@ -437,7 +463,9 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                             "speaker": {
                                 "status": speaker_status,
                                 "similarity": (
-                                    round(speaker_similarity, 4) if speaker_similarity is not None else None
+                                    round(speaker_similarity, 4)
+                                    if speaker_similarity is not None
+                                    else None
                                 ),
                                 "speaker_id": target_spk,
                                 "is_match": spk_verif.get("is_match", False),
@@ -455,7 +483,9 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                         await broadcast_telemetry(telemetry_packet)
 
                     except Exception as model_err:
-                        logger.error(f"[TWILIO ML Error] Inference failure for {state.call_sid}: {model_err}")
+                        logger.error(
+                            f"[TWILIO ML Error] Inference failure for {state.call_sid}: {model_err}"
+                        )
 
             # -------------------------------------------------------------
             # Event: stop

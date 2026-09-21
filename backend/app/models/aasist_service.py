@@ -5,7 +5,6 @@ Provides predict_spoof_prob() with automatic PyTorch fallback.
 """
 
 import os
-import urllib.request
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
@@ -24,8 +23,6 @@ except ImportError:
 from app.config import settings
 from app.models.aasist import DEFAULT_AASIST_CONFIG
 from app.models.aasist import Model as AASISTModel
-
-OFFICIAL_AASIST_WEIGHTS_URL = "https://github.com/clovaai/aasist/raw/main/models/weights/AASIST.pth"
 
 
 class _LoadStatus(int):
@@ -101,14 +98,18 @@ class AASISTModelAdapter:
         self._is_onnx_loaded = bool(value)
 
     @property
-    def is_pytorch_loaded(self) -> _LoadStatus:
-        return _LoadStatus(1 if self._is_loaded else 0)
+    def status(self) -> str:
+        """Explicit model readiness status: READY, NOT_READY, or LOAD_ERROR."""
+        if self._is_onnx_loaded or self._is_loaded:
+            return "READY"
+        if self.load_error:
+            return "LOAD_ERROR"
+        return "NOT_READY"
 
     def _initialize_onnx(self) -> None:
         """Initializes ONNX Runtime session with CUDA and CPU providers."""
         if not HAS_ORT or not os.path.exists(self.onnx_path):
             self.load_error = f"ONNX model file not found at {self.onnx_path}"
-            print(f"[AASISTAdapter] {self.load_error}. Using PyTorch fallback.")
             self._is_onnx_loaded = False
             return
 
@@ -119,71 +120,31 @@ class AASISTModelAdapter:
                 providers.append("CUDAExecutionProvider")
             providers.append("CPUExecutionProvider")
 
-            print(
-                f"[AASISTAdapter] Loading ONNX model from {self.onnx_path} with providers: {providers}"
-            )
             self.ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
             self._is_onnx_loaded = True
-            print(
-                f"[AASISTAdapter] ONNX Runtime session active using: {self.ort_session.get_providers()[0]}"
-            )
         except Exception as err:
-            import traceback
-
             self.load_error = f"ONNX session initialization failed: {err}"
-            print(
-                f"[AASISTAdapter] ONNX initialization failed: {err}\n{traceback.format_exc()}. Falling back to PyTorch."
-            )
             self._is_onnx_loaded = False
 
-    def _ensure_weights(self) -> str:
-        """Verifies checkpoint exists, otherwise downloads from official repo."""
-        os.makedirs(os.path.dirname(self.weights_path), exist_ok=True)
-        if os.path.exists(self.weights_path) and os.path.getsize(self.weights_path) > 100000:
-            return self.weights_path
-
-        print(
-            f"[AASISTAdapter] Weights not found at {self.weights_path}. Downloading from official source..."
-        )
-        try:
-            req = urllib.request.Request(
-                OFFICIAL_AASIST_WEIGHTS_URL, headers={"User-Agent": "V-SHIELD-Client/1.0"}
-            )
-            with urllib.request.urlopen(req) as response, open(self.weights_path, "wb") as out_file:
-                out_file.write(response.read())
-            print(f"[AASISTAdapter] AASIST.pth successfully downloaded to {self.weights_path}")
-        except Exception as exc:
-            print(
-                f"[AASISTAdapter] Warning: Could not download weights from web ({exc})."
-            )
-        return self.weights_path
-
     def _initialize_model(self) -> None:
-        """Instantiates PyTorch AASIST model for fallback or standalone use."""
+        """Instantiates PyTorch AASIST model from local weights without network downloads."""
         try:
             self.model = AASISTModel(DEFAULT_AASIST_CONFIG)
-            ckpt_path = self._ensure_weights()
-
-            if os.path.exists(ckpt_path) and os.path.getsize(ckpt_path) > 100000:
-                state_dict = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+            if os.path.exists(self.weights_path) and os.path.getsize(self.weights_path) > 100000:
+                state_dict = torch.load(
+                    self.weights_path, map_location=self.device, weights_only=False
+                )
                 self.model.load_state_dict(state_dict, strict=False)
-                print(f"[AASISTAdapter] Loaded PyTorch weights from {ckpt_path} on {self.device}")
                 self.model.to(self.device)
                 self.model.eval()
                 self._is_loaded = True
             else:
                 if not self._is_onnx_loaded:
-                    self.load_error = f"AASIST checkpoint missing or invalid at {ckpt_path}"
-                    print(f"[AASISTAdapter] Error: {self.load_error}")
+                    self.load_error = f"AASIST checkpoint missing or invalid at {self.weights_path}"
                 self._is_loaded = False
         except Exception as err:
-            import traceback
-
             if not self._is_onnx_loaded:
                 self.load_error = f"PyTorch AASIST initialization failed: {err}"
-            print(
-                f"[AASISTAdapter] Error during PyTorch model initialization: {err}\n{traceback.format_exc()}"
-            )
             self._is_loaded = False
 
     def predict_spoof_prob(self, audio_np: np.ndarray) -> float:
@@ -217,9 +178,7 @@ class AASISTModelAdapter:
         _, spoof_prob = self.predict(tensor)
         return spoof_prob
 
-    def predict(
-        self, audio: Union[np.ndarray, torch.Tensor]
-    ) -> Tuple[torch.Tensor, float]:
+    def predict(self, audio: Union[np.ndarray, torch.Tensor]) -> Tuple[torch.Tensor, float]:
         """
         Unified inference on audio tensor or numpy array under torch.no_grad().
         Routes through ONNX Runtime if available, otherwise PyTorch model.

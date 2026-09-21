@@ -22,7 +22,6 @@ import json
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 from app.config import settings
 from app.core.auth import get_default_operator_token
 from app.main import aasist_service, app, ecapa_service
@@ -270,7 +269,9 @@ def test_11_ecapa():
     ecapa_service.enroll_speaker("test_exec_999", enroll_audio, 16000)
 
     with client.websocket_connect(f"/ws/analyze?token={AUTH_TOKEN}") as ws:
-        ws.send_text(json.dumps({"type": "start", "speaker_id": "test_exec_999", "format": "float32"}))
+        ws.send_text(
+            json.dumps({"type": "start", "speaker_id": "test_exec_999", "format": "float32"})
+        )
         _ = json.loads(ws.receive_text())
 
         ws.send_bytes(audio.tobytes())
@@ -298,7 +299,12 @@ def test_12_risk_engine():
         risk_score = analysis["risk_score"]
         assert isinstance(risk_score, (int, float))
         assert 0.0 <= risk_score <= 100.0
-        assert analysis["classification"] in ("LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "INSUFFICIENT_DATA")
+        assert analysis["classification"] in (
+            "LOW_RISK",
+            "MEDIUM_RISK",
+            "HIGH_RISK",
+            "INSUFFICIENT_DATA",
+        )
 
         # Drain any residual queued messages
         ws.send_text(json.dumps({"type": "stop"}))
@@ -309,7 +315,10 @@ def test_12_risk_engine():
         ws_err.send_text(json.dumps({"type": "start", "format": "float32"}))
         _ = json.loads(ws_err.receive_text())
 
-        with patch("app.main.aasist_service.predict", side_effect=RuntimeError("Simulated inference failure")):
+        with patch(
+            "app.main.aasist_service.predict",
+            side_effect=RuntimeError("Simulated inference failure"),
+        ):
             ws_err.send_bytes(audio.tobytes())
             err_analysis = None
             for _ in range(5):

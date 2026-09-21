@@ -55,46 +55,17 @@ class ECAPAService:
         self._load_onnx_model()
         self._load_speechbrain_model()
         self._load_enrolled_from_db()
-        self._seed_default_speakers()
+
+    @property
+    def is_available(self) -> bool:
+        """Returns True if at least one genuine ECAPA-TDNN model engine is loaded."""
+        return bool(self.is_onnx_loaded or self.is_loaded)
 
     @classmethod
     def get_instance(cls) -> "ECAPAService":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-
-    def _load_onnx_model(self) -> None:
-        """Initializes ONNX Runtime session for ECAPA-TDNN embedding extraction."""
-        if not HAS_ORT or not os.path.exists(self.onnx_path):
-            self.load_error = f"ECAPA ONNX model not found at {self.onnx_path}"
-            print(
-                f"[ECAPAService] {self.load_error}. Using PyTorch/Acoustic fallback."
-            )
-            self.is_onnx_loaded = False
-            return
-
-        try:
-            available_providers = ort.get_available_providers()
-            providers = []
-            if "CUDAExecutionProvider" in available_providers and torch.cuda.is_available():
-                providers.append("CUDAExecutionProvider")
-            providers.append("CPUExecutionProvider")
-
-            print(
-                f"[ECAPAService] Loading ECAPA ONNX model from {self.onnx_path} with providers: {providers}"
-            )
-            self.ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
-            self.is_onnx_loaded = True
-            print(
-                f"[ECAPAService] ONNX Runtime session active using: {self.ort_session.get_providers()[0]}"
-            )
-        except Exception as err:
-            import traceback
-            self.load_error = f"ECAPA ONNX session initialization failed: {err}"
-            print(
-                f"[ECAPAService] ONNX initialization failed: {err}\n{traceback.format_exc()}. Falling back to SpeechBrain."
-            )
-            self.is_onnx_loaded = False
 
     def _init_db(self) -> None:
         """Initializes SQLite database for speaker profiles."""
@@ -111,13 +82,32 @@ class ECAPAService:
             """)
             conn.commit()
 
+    def _load_onnx_model(self) -> None:
+        """Initializes ONNX Runtime session for ECAPA-TDNN embedding extraction."""
+        if not HAS_ORT or not os.path.exists(self.onnx_path):
+            self.load_error = f"ECAPA ONNX model not found at {self.onnx_path}"
+            self.is_onnx_loaded = False
+            return
+
+        try:
+            available_providers = ort.get_available_providers()
+            providers = []
+            if "CUDAExecutionProvider" in available_providers and torch.cuda.is_available():
+                providers.append("CUDAExecutionProvider")
+            providers.append("CPUExecutionProvider")
+
+            self.ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
+            self.is_onnx_loaded = True
+        except Exception as err:
+            self.load_error = f"ECAPA ONNX session initialization failed: {err}"
+            self.is_onnx_loaded = False
+
     def _load_speechbrain_model(self) -> None:
         """Loads SpeechBrain ECAPA-TDNN classifier."""
         try:
             from speechbrain.inference.classifiers import EncoderClassifier
             from speechbrain.utils.fetching import LocalStrategy
 
-            print("[ECAPAService] Loading SpeechBrain spkrec-ecapa-voxceleb...")
             self.classifier = EncoderClassifier.from_hparams(
                 source="speechbrain/spkrec-ecapa-voxceleb",
                 run_opts={"device": self.device},
@@ -125,11 +115,8 @@ class ECAPAService:
                 local_strategy=LocalStrategy.COPY,
             )
             self.is_loaded = True
-            print("[ECAPAService] SpeechBrain ECAPA-TDNN loaded successfully.")
         except Exception as exc:
-            print(
-                f"[ECAPAService] Note: SpeechBrain live model load deferred ({exc}). Using deterministic acoustic feature encoder for offline mode."
-            )
+            self.load_error = f"SpeechBrain ECAPA model load deferred: {exc}"
             self.is_loaded = False
 
     def _load_enrolled_from_db(self) -> None:
@@ -144,27 +131,6 @@ class ECAPAService:
                     "speaker_id": speaker_id,
                     "name": name,
                     "enrolled_at": enrolled_at,
-                }
-
-    def _seed_default_speakers(self) -> None:
-        """Pre-seeds standard executive profiles if database is empty."""
-        if not self._enrolled_embeddings:
-            defaults = [
-                ("exec-001", "Dr. Rajesh Sharma (Chief Technology Officer)"),
-                ("exec-002", "Ananya Iyer (VP of Financial Operations)"),
-                ("exec-003", "Vikram Malhotra (Lead Treasury Controller)"),
-            ]
-            for sid, name in defaults:
-                # Deterministic normalized 192-d embedding
-                rng = np.random.RandomState(hash(sid) % (2**32))
-                vec = rng.randn(192).astype(np.float32)
-                vec = vec / (np.linalg.norm(vec) + 1e-9)
-                self._save_speaker_to_db(sid, name, vec)
-                self._enrolled_embeddings[sid] = vec
-                self._enrolled_metadata[sid] = {
-                    "speaker_id": sid,
-                    "name": name,
-                    "enrolled_at": time.time(),
                 }
 
     def _save_speaker_to_db(self, speaker_id: str, name: str, embedding: np.ndarray) -> None:
@@ -251,28 +217,11 @@ class ECAPAService:
                     f"[ECAPAService] Inference error on live classifier ({e}). Falling back to acoustic signature."
                 )
 
-        # Resilient offline feature extractor:
-        # Generates 192-d normalized acoustic voiceprint from spectral/temporal statistics
-        if len(audio_np) < 512:
-            audio_np = np.pad(audio_np, (0, 512 - len(audio_np)))
-
-        # FFT spectral moments + autocorrelation
-        fft_mags = np.abs(np.fft.rfft(audio_np[:16000]))
-        chunk_size = max(1, len(fft_mags) // 96)
-        spec_feats = [np.mean(fft_mags[i * chunk_size : (i + 1) * chunk_size]) for i in range(96)]
-
-        # Temporal statistics
-        energy = np.mean(audio_np**2)
-        zero_cross = np.mean(np.diff(np.sign(audio_np)) != 0)
-        time_feats = [float(energy), float(zero_cross)] + [
-            float(np.std(audio_np[i::94])) for i in range(94)
-        ]
-
-        combined = np.array(spec_feats + time_feats, dtype=np.float32)[:192]
-        if len(combined) < 192:
-            combined = np.pad(combined, (0, 192 - len(combined)))
-        norm = np.linalg.norm(combined) + 1e-9
-        return (combined / norm).astype(np.float32)
+        # If neither ONNX nor SpeechBrain inference succeeded, fail explicitly.
+        raise RuntimeError(
+            f"ECAPA-TDNN model unavailable: neither ONNX Runtime nor SpeechBrain engine is active. "
+            f"Load error: {self.load_error or 'No model available'}"
+        )
 
     def enroll_speaker(
         self,
@@ -300,18 +249,22 @@ class ECAPAService:
         """
         Computes cosine similarity between incoming audio and registered speaker embedding.
         Returns:
-            cosine_similarity in [-1.0, 1.0], or None if speaker not found.
+            cosine_similarity in [-1.0, 1.0], or None if speaker not found or model unavailable.
         """
-        if speaker_id not in self._enrolled_embeddings:
+        if not self.is_available or speaker_id not in self._enrolled_embeddings:
             return None
 
-        enrolled_emb = self._enrolled_embeddings[speaker_id]
-        current_emb = self.extract_embedding(audio)
+        try:
+            enrolled_emb = self._enrolled_embeddings[speaker_id]
+            current_emb = self.extract_embedding(audio)
 
-        # Cosine similarity between unit vectors
-        dot_product = float(np.dot(enrolled_emb, current_emb))
-        cos_sim = max(-1.0, min(1.0, dot_product))
-        return cos_sim
+            # Cosine similarity between unit vectors
+            dot_product = float(np.dot(enrolled_emb, current_emb))
+            cos_sim = max(-1.0, min(1.0, dot_product))
+            return cos_sim
+        except Exception as err:
+            print(f"[ECAPAService] Speaker verification extraction failure: {err}")
+            return None
 
     def verify_speaker_detailed(
         self,
@@ -325,13 +278,22 @@ class ECAPAService:
 
         Returns:
             Dict containing:
-                - status: 'VERIFIED' (>=0.70), 'MISMATCH' (<=0.40), 'EVALUATING' (0.40-0.70),
-                          or 'NO_VOICEPRINT' if no profile exists for speaker_id.
-                - similarity: float cosine similarity or None if unenrolled.
+                - status: 'VERIFIED', 'MISMATCH', 'EVALUATING', 'NO_VOICEPRINT', or 'UNAVAILABLE'.
+                - similarity: float cosine similarity or None if unenrolled / unavailable.
                 - speaker_id: speaker ID queried.
                 - is_match: bool indicating verified biometric identity match.
                 - has_voiceprint: bool indicating enrolled profile was found.
         """
+        if not self.is_available:
+            return {
+                "status": "UNAVAILABLE",
+                "reason": "ECAPA model unavailable",
+                "similarity": None,
+                "speaker_id": speaker_id,
+                "is_match": False,
+                "has_voiceprint": bool(speaker_id and speaker_id in self._enrolled_embeddings),
+            }
+
         if not speaker_id or speaker_id not in self._enrolled_embeddings:
             return {
                 "status": "NO_VOICEPRINT",
@@ -348,7 +310,7 @@ class ECAPAService:
                 "similarity": None,
                 "speaker_id": speaker_id,
                 "is_match": False,
-                "has_voiceprint": False,
+                "has_voiceprint": True,
             }
 
         if similarity >= threshold_match:

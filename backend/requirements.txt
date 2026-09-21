@@ -22,3 +22,5 @@ black>=24.0.0
 flake8>=7.0.0
 audioop-lts>=0.2.0
 twilio>=9.0.0
+PyJWT>=2.8.0
+bcrypt>=4.1.0

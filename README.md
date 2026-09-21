@@ -149,3 +149,25 @@ V-SHIELD supports direct inbound cellular and PSTN telephone call monitoring via
 - **Live Telemetry & Dashboard**: Telephony threat events, spoof probability, speaker similarity, and automated MFA actions stream in real time to the React dashboard.
 
 For configuration and ngrok setup, see [docs/TWILIO_SETUP.md](docs/TWILIO_SETUP.md) and [docs/TWILIO_ARCHITECTURE.md](docs/TWILIO_ARCHITECTURE.md).
+
+---
+
+## 7. Production Readiness & CI/CD Verification
+
+For in-depth architecture verification, authentication protocols, and security audits, refer to:
+- [Production Readiness Specification](docs/PRODUCTION_READINESS.md)
+- [Baseline Bug Audit Report](docs/BUG_AUDIT_BEFORE_FIX.md)
+
+### Running Automated Checks Locally
+```bash
+# Code Quality & Formatting
+ruff check backend/app tests/
+black --check backend/app tests/
+flake8 backend/app tests/
+
+# Pytest Suite with >= 80% Coverage Gate
+pytest tests/ -v --cov=backend/app --cov-report=term-missing --cov-fail-under=80
+
+# Frontend Typecheck & Production Build
+cd frontend && npm ci && npm run lint && npm run build
+```

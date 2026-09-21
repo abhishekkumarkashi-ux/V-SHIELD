@@ -106,7 +106,10 @@ def test_realtime_pipeline_exception_handling_no_zero_default():
         _ = json.loads(ws.receive_text())
 
         # Mock aasist_service.predict to simulate runtime failure
-        with patch("app.main.aasist_service.predict", side_effect=RuntimeError("CUDA execution error simulated")):
+        with patch(
+            "app.main.aasist_service.predict",
+            side_effect=RuntimeError("CUDA execution error simulated"),
+        ):
             t_full = np.linspace(0, 4.0375, 64600, endpoint=False, dtype=np.float32)
             full_pcm = (0.3 * np.sin(2 * np.pi * 440.0 * t_full)).astype(np.float32)
             ws.send_bytes(full_pcm.tobytes())

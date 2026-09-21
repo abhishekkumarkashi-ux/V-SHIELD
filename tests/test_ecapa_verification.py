@@ -92,7 +92,9 @@ def test_speaker_enrollment_and_sqlite_persistence(tmp_path):
     # Check directly inside SQLite database
     with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT speaker_id, name, embedding FROM speakers WHERE speaker_id=?", ("exec-test-42",))
+        cursor.execute(
+            "SELECT speaker_id, name, embedding FROM speakers WHERE speaker_id=?", ("exec-test-42",)
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == "exec-test-42"

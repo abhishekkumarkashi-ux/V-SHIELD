@@ -129,4 +129,3 @@ def test_vad_transient_click_rejection():
     diag = vad.analyze_speech(audio)
     assert diag["state"] == "SILENCE"
     assert not diag["is_speech_active"]
-
