@@ -71,7 +71,7 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install -r backend/requirements.txt
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r backend/requirements.txt
 
       - name: Run Pytest Suite with Coverage Enforcement (>=80%)
         env:
