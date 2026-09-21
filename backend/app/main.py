@@ -246,7 +246,17 @@ async def websocket_live_call(
     if auth_header and auth_header.strip().lower().startswith("bearer "):
         header_token = auth_header.strip()[7:].strip()
 
-    candidate_token = token or auth_token or header_token
+    # Extract cookie token if present
+    cookie_token = (
+        websocket.cookies.get("vshield_token")
+        or websocket.cookies.get("access_token")
+        or websocket.cookies.get("token")
+        or websocket.cookies.get("authorization")
+    )
+    if cookie_token and cookie_token.strip().lower().startswith("bearer "):
+        cookie_token = cookie_token.strip()[7:].strip()
+
+    candidate_token = token or auth_token or header_token or cookie_token
     if not candidate_token:
         subprotocols = websocket.headers.get("sec-websocket-protocol", "").split(",")
         for subproto in subprotocols:
@@ -277,8 +287,8 @@ async def websocket_live_call(
                 json.dumps(
                     {
                         "type": "auth_error",
-                        "error": "unauthenticated",
-                        "code": "UNAUTHENTICATED",
+                        "error": "unauthorized",
+                        "code": "UNAUTHORIZED",
                         "message": "Invalid authentication credentials.",
                     }
                 )
@@ -341,9 +351,9 @@ async def websocket_live_call(
                         json.dumps(
                             {
                                 "type": "auth_error",
-                                "error": "unauthenticated",
-                                "code": "UNAUTHENTICATED",
-                                "message": "Unauthenticated audio rejected. Valid user token required.",
+                                "error": "unauthorized",
+                                "code": "UNAUTHORIZED",
+                                "message": "Authentication required",
                             }
                         )
                     )
@@ -358,8 +368,8 @@ async def websocket_live_call(
                                 {
                                     "type": "session_error",
                                     "error": "inactive session",
-                                    "code": "INACTIVE_SESSION",
-                                    "message": "Inactive analysis session. Send 'start' before streaming audio.",
+                                    "code": "SESSION_NOT_ACTIVE",
+                                    "message": "Start an analysis session before sending audio",
                                 }
                             )
                         )
@@ -712,8 +722,8 @@ async def websocket_live_call(
                                     json.dumps(
                                         {
                                             "type": "auth_error",
-                                            "error": "unauthenticated",
-                                            "code": "UNAUTHENTICATED",
+                                            "error": "unauthorized",
+                                            "code": "UNAUTHORIZED",
                                             "message": "Invalid authentication credentials.",
                                         }
                                     )
@@ -724,9 +734,9 @@ async def websocket_live_call(
                                 json.dumps(
                                     {
                                         "type": "auth_error",
-                                        "error": "unauthenticated",
-                                        "code": "UNAUTHENTICATED",
-                                        "message": "Authentication token required.",
+                                        "error": "unauthorized",
+                                        "code": "UNAUTHORIZED",
+                                        "message": "Authentication required",
                                     }
                                 )
                             )
@@ -736,9 +746,9 @@ async def websocket_live_call(
                             json.dumps(
                                 {
                                     "type": "auth_error",
-                                    "error": "unauthenticated",
-                                    "code": "UNAUTHENTICATED",
-                                    "message": "Authentication required. Provide a valid token before issuing commands.",
+                                    "error": "unauthorized",
+                                    "code": "UNAUTHORIZED",
+                                    "message": "Authentication required",
                                 }
                             )
                         )
