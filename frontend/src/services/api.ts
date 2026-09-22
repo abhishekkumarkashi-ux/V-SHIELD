@@ -69,6 +69,14 @@ export async function fetchSpeakers(): Promise<SpeakerProfile[]> {
   return response.json();
 }
 
+export interface UserProfile {
+  user_id: string;
+  username: string;
+  name: string;
+  role: string;
+  picture?: string | null;
+}
+
 /**
  * Returns currently stored authentication token from localStorage.
  */
@@ -84,47 +92,95 @@ export function setAuthToken(token: string): void {
 }
 
 /**
+ * Clears stored authentication token.
+ */
+export function removeAuthToken(): void {
+  localStorage.removeItem('vshield_auth_token');
+}
+
+/**
  * Ensures an active operator session token exists.
- * If not already in localStorage, automatically logs in using the default operator account.
+ * Returns cached token from localStorage if present.
  */
 export async function ensureAuthToken(): Promise<string> {
-  const cached = getAuthToken();
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    let res: Response;
-    try {
-      res = await fetch('/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: 'analyst@vshield.internal',
-          password: 'VShieldDev2026!',
-        }),
-      });
-    } catch {
-      res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: 'analyst@vshield.internal',
-          password: 'VShieldDev2026!',
-        }),
-      });
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.access_token) {
-        setAuthToken(data.access_token);
-        return data.access_token;
-      }
-    }
-  } catch (err) {
-    console.warn('[V-SHIELD Auth] Auto-authentication notice:', err);
-  }
-
-  return '';
+  return getAuthToken() || '';
 }
+
+/**
+ * Authenticates user credentials against the V-SHIELD backend.
+ */
+export async function loginOperator(
+  username: string,
+  password: string
+): Promise<{ access_token: string; user: UserProfile }> {
+  const payload = { username, password };
+  let res: Response;
+  try {
+    res = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ detail: 'Authentication failed' }));
+    throw new Error(errorData.detail || `Login failed (${res.status})`);
+  }
+
+  const data = await res.json();
+  if (data.access_token) {
+    setAuthToken(data.access_token);
+  }
+  return data;
+}
+
+/**
+ * Retrieves authenticated operator profile.
+ */
+export async function fetchCurrentUser(token?: string): Promise<UserProfile> {
+  const authToken = token || getAuthToken();
+  if (!authToken) {
+    throw new Error('unauthenticated');
+  }
+
+  const headers = {
+    Authorization: `Bearer ${authToken}`,
+  };
+
+  let res: Response;
+  try {
+    res = await fetch('/api/v1/auth/me', { headers });
+  } catch {
+    res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/me`, { headers });
+  }
+
+  if (!res.ok) {
+    throw new Error(`Session verification failed (${res.status})`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Logs out operator and invalidates backend session.
+ */
+export async function logoutOperator(): Promise<void> {
+  removeAuthToken();
+  try {
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST' });
+    } catch {
+      await fetch(`${BACKEND_BASE_URL}/api/v1/auth/logout`, { method: 'POST' });
+    }
+  } catch {
+    // Local session was already cleared
+  }
+}
+

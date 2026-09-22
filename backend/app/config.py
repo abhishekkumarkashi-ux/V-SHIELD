@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     DEMO_OPERATOR_USERNAME: str = "analyst@vshield.internal"
     DEMO_OPERATOR_PASSWORD: Optional[str] = None
 
+    # Google OAuth 2.0 / OpenID Connect (Configurable)
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+    FRONTEND_URL: str = "http://localhost:5173"
+
     model_config = SettingsConfigDict(env_file=".env", extra="allow")
 
     @field_validator("CORS_ORIGINS", mode="before")

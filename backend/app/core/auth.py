@@ -281,6 +281,123 @@ def get_default_operator_token() -> str:
 
 
 # =====================================================================
+# Google OAuth 2.0 State Security & User Provisioning
+# =====================================================================
+
+
+def create_oauth_state(expires_in_sec: int = 600) -> str:
+    """
+    Generates an HMAC-SHA256 signed OAuth state string to protect against CSRF attacks.
+    Format: base64url(nonce:timestamp:expires_in).signature
+    """
+    import os
+
+    nonce = os.urandom(16).hex()
+    timestamp = int(time.time())
+    payload = f"{nonce}:{timestamp}:{expires_in_sec}"
+    payload_b64 = _base64url_encode(payload.encode("utf-8"))
+    secret = (settings.JWT_SECRET_KEY or "vshield_oauth_state_salt").encode("utf-8")
+    sig = hmac.new(secret, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+    sig_b64 = _base64url_encode(sig)
+    return f"{payload_b64}.{sig_b64}"
+
+
+def verify_oauth_state(state: str) -> bool:
+    """
+    Verifies the cryptographic integrity and freshness of the OAuth state.
+    """
+    if not state or not isinstance(state, str) or "." not in state:
+        return False
+    parts = state.split(".")
+    if len(parts) != 2:
+        return False
+    payload_b64, sig_b64 = parts
+    secret = (settings.JWT_SECRET_KEY or "vshield_oauth_state_salt").encode("utf-8")
+    expected_sig = hmac.new(secret, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+    try:
+        actual_sig = _base64url_decode(sig_b64)
+    except Exception:
+        return False
+    if not hmac.compare_digest(expected_sig, actual_sig):
+        return False
+
+    try:
+        payload_bytes = _base64url_decode(payload_b64)
+        payload = payload_bytes.decode("utf-8")
+        _, timestamp_str, expires_in_str = payload.split(":")
+        timestamp = int(timestamp_str)
+        expires_in = int(expires_in_str)
+        if time.time() > (timestamp + expires_in):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def find_or_create_google_user(
+    google_sub: str,
+    email: str,
+    name: Optional[str] = None,
+    picture: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Locates an existing user by Google subject ID or email, or registers a new operator in USERS_DB.
+    Returns the user profile dict.
+    """
+    normalized_email = email.strip().lower()
+
+    # 1. Search by google_sub or email in USERS_DB
+    matched_key = None
+    for key, u in USERS_DB.items():
+        if u.get("google_sub") == google_sub:
+            matched_key = key
+            break
+        if key.lower() == normalized_email or u.get("username", "").lower() == normalized_email:
+            matched_key = key
+            break
+
+    if matched_key and matched_key in USERS_DB:
+        user = USERS_DB[matched_key]
+        user["google_sub"] = google_sub
+        if picture and not user.get("picture"):
+            user["picture"] = picture
+        if name and (not user.get("name") or user.get("name") == "Operator"):
+            user["name"] = name
+        return {
+            "user_id": user["user_id"],
+            "username": user["username"],
+            "name": user["name"],
+            "role": user["role"],
+            "picture": user.get("picture"),
+        }
+
+    # 2. Create new registered operator user entry
+    short_hash = hashlib.sha256(google_sub.encode("utf-8")).hexdigest()[:8]
+    user_id = f"usr_google_{short_hash}"
+    display_name = name.strip() if name and name.strip() else normalized_email.split("@")[0]
+
+    new_user = {
+        "user_id": user_id,
+        "username": normalized_email,
+        "name": display_name,
+        "role": "analyst",
+        "google_sub": google_sub,
+        "picture": picture,
+        "password_hash": "OAUTH_GOOGLE_ACCOUNT",
+        "is_active": True,
+    }
+    USERS_DB[normalized_email] = new_user
+
+    return {
+        "user_id": new_user["user_id"],
+        "username": new_user["username"],
+        "name": new_user["name"],
+        "role": new_user["role"],
+        "picture": new_user.get("picture"),
+    }
+
+
+# =====================================================================
 # Live Analysis Session State Machine
 # =====================================================================
 

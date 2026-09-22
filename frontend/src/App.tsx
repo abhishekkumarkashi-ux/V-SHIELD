@@ -11,6 +11,9 @@ import {
   WifiOff,
   UploadCloud,
   AlertTriangle,
+  LogOut,
+  User,
+  Loader2,
 } from 'lucide-react';
 
 import { useVShieldSocket } from './hooks/useVShieldSocket';
@@ -21,13 +24,16 @@ import { TelemetryBreakdown } from './components/TelemetryBreakdown';
 import { MitigationAlert } from './components/MitigationAlert';
 import { FileUploadAnalyzer } from './components/FileUploadAnalyzer';
 import { fetchHealth, fetchSpeakers, ensureAuthToken, SystemHealth } from './services/api';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { LoginPage } from './components/LoginPage';
 
 interface SpeakerOption {
   speaker_id: string;
   name: string;
 }
 
-export const App: React.FC = () => {
+const AuthenticatedApp: React.FC = () => {
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'live' | 'upload'>('live');
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>('exec-001');
   const [speakersList, setSpeakersList] = useState<SpeakerOption[]>([
@@ -308,6 +314,40 @@ export const App: React.FC = () => {
                 <span>OFFLINE</span>
               </>
             )}
+          </div>
+
+          {/* Authenticated Operator Profile & Logout */}
+          <div className="flex items-center space-x-3 border-l border-slate-800/80 pl-4">
+            <div className="flex items-center space-x-2">
+              {user?.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name || 'Operator'}
+                  className="w-7 h-7 rounded-full border border-cyan-500/40 object-cover"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-cyan-400">
+                  <User className="w-3.5 h-3.5" />
+                </div>
+              )}
+              <div className="hidden md:block text-left">
+                <div className="text-xs font-bold text-slate-200 leading-tight">
+                  {user?.name || user?.username || 'Operator'}
+                </div>
+                <div className="text-[10px] font-mono text-cyan-400 uppercase">
+                  {user?.role || 'analyst'}
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={logout}
+              title="Sign out of V-SHIELD"
+              className="p-1.5 px-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-red-500/50 hover:bg-red-950/40 text-slate-400 hover:text-red-300 transition cursor-pointer flex items-center space-x-1.5"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline text-[11px] font-medium">Logout</span>
+            </button>
           </div>
         </div>
       </header>
@@ -616,4 +656,37 @@ export const App: React.FC = () => {
   );
 };
 
+const AppContent: React.FC = () => {
+  const { authState } = useAuth();
+
+  if (authState === 'loading') {
+    return (
+      <div className="min-h-screen bg-[#070b14] flex flex-col items-center justify-center space-y-4">
+        <div className="p-3 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-2xl shadow-xl shadow-cyan-900/40 animate-pulse">
+          <Shield className="w-8 h-8 text-white" />
+        </div>
+        <div className="flex items-center space-x-2 text-cyan-400 font-mono text-xs">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Initializing V-SHIELD Security Session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === 'unauthenticated') {
+    return <LoginPage />;
+  }
+
+  return <AuthenticatedApp />;
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+};
+
 export default App;
+

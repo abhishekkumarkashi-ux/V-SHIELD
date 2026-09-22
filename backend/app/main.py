@@ -83,6 +83,7 @@ from app.routers.twilio import (
 app.include_router(analyze_router, prefix="/api/v1")
 app.include_router(mfa_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api")
 app.include_router(twilio_router, prefix="/api/v1")
 
 

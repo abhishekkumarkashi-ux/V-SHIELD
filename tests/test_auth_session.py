@@ -338,3 +338,120 @@ def test_authenticate_user_and_mask_secret():
     # Invalid token error raise
     with pytest.raises(InvalidTokenError):
         verify_access_token("completely_invalid_token")
+
+
+# =====================================================================
+# Google OAuth 2.0 & Logout Endpoint Tests
+# =====================================================================
+
+
+def test_auth_logout_endpoint():
+    """Verify POST /api/v1/auth/logout clears session cookies."""
+    resp = client.post("/api/v1/auth/logout")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+
+def test_google_login_unconfigured(monkeypatch):
+    """Verify /google/login gracefully redirects with error parameter when unconfigured."""
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", None)
+    resp = client.get("/api/v1/auth/google/login", follow_redirects=False)
+    assert resp.status_code == 307
+    assert "error=google_not_configured" in resp.headers["location"]
+
+
+def test_google_login_configured(monkeypatch):
+    """Verify /google/login redirects to Google OAuth consent screen with CSRF state."""
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
+    resp = client.get("/api/v1/auth/google/login", follow_redirects=False)
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert "accounts.google.com/o/oauth2/v2/auth" in location
+    assert "client_id=test-client-id.apps.googleusercontent.com" in location
+    assert "state=" in location
+
+
+def test_google_callback_error_handling():
+    """Verify Google callback properly forwards error query parameter."""
+    resp = client.get(
+        "/api/v1/auth/google/callback?error=access_denied",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    assert "error=access_denied" in resp.headers["location"]
+
+
+def test_google_callback_invalid_csrf_state():
+    """Verify Google callback rejects invalid or tampered CSRF state."""
+    resp = client.get(
+        "/api/v1/auth/google/callback?code=mock_code&state=tampered.state.123",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    assert "error=invalid_oauth_state" in resp.headers["location"]
+
+
+def test_google_callback_successful_flow(monkeypatch):
+    """Verify Google OAuth token exchange, tokeninfo verification, and user session creation."""
+    from app.core.auth import create_oauth_state
+
+    valid_state = create_oauth_state()
+    client_id = "test-google-client-id.apps.googleusercontent.com"
+    client_secret = "test-google-secret"
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", client_id)
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", client_secret)
+
+    # Mock httpx.AsyncClient responses
+    import httpx
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def post(self, url, data=None):
+            return httpx.Response(
+                200,
+                json={"access_token": "mock_google_access", "id_token": "mock_id_token"},
+            )
+
+        async def get(self, url, params=None):
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "109876543210123456789",
+                    "email": "analyst.google@vshield.internal",
+                    "email_verified": True,
+                    "name": "Dr. Google Analyst",
+                    "picture": "https://lh3.googleusercontent.com/a/mock_avatar",
+                    "aud": client_id,
+                    "iss": "https://accounts.google.com",
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
+
+    resp = client.get(
+        f"/api/v1/auth/google/callback?code=valid_auth_code&state={valid_state}",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert "auth_token=" in location
+
+    # Extract issued token from redirect URL and verify
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(location)
+    query_params = urllib.parse.parse_qs(parsed.query)
+    issued_token = query_params["auth_token"][0]
+
+    payload = verify_access_token(issued_token)
+    assert payload["username"] == "analyst.google@vshield.internal"
+    assert payload["role"] == "analyst"
