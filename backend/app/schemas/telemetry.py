@@ -35,6 +35,25 @@ class TelemetryMetrics(BaseModel):
     )
 
 
+class PerformanceTelemetry(BaseModel):
+    preprocess_ms: float = Field(default=0.0, description="Audio preprocessing and VAD time in ms")
+    aasist_ms: float = Field(default=0.0, description="AASIST inference latency in ms")
+    ecapa_ms: float = Field(default=0.0, description="ECAPA speaker verification latency in ms")
+    risk_engine_ms: float = Field(default=0.0, description="Risk engine fusion latency in ms")
+    total_ms: float = Field(default=0.0, description="Total window processing latency in ms")
+    provider: str = Field(
+        default="CPUExecutionProvider", description="Active ONNX execution provider"
+    )
+    device: str = Field(default="cpu", description="Active compute device (cuda/cpu)")
+    performance_status: Literal["OPTIMAL", "DEGRADED"] = Field(
+        default="OPTIMAL", description="Performance health against hop budget"
+    )
+    hop_budget_ms: float = Field(default=500.0, description="Target audio hop budget in ms")
+    actual_p50_ms: Optional[float] = Field(
+        default=None, description="Rolling actual p50 latency in ms"
+    )
+
+
 class TelemetryPacket(BaseModel):
     timestamp: float = Field(..., description="Unix epoch timestamp in seconds")
     risk_score: Optional[float] = Field(
@@ -77,6 +96,12 @@ class TelemetryPacket(BaseModel):
     )
     latency: Optional[Dict[str, float]] = Field(
         default=None, description="Detailed stage latency breakdown in milliseconds"
+    )
+    performance: Optional[PerformanceTelemetry] = Field(
+        default=None, description="Detailed runtime inference performance telemetry"
+    )
+    performance_status: Optional[str] = Field(
+        default="OPTIMAL", description="Hop budget compliance: OPTIMAL or DEGRADED"
     )
 
 

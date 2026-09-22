@@ -46,6 +46,8 @@ class ECAPAService:
         self.classifier = None
         self.is_loaded: bool = False
         self.load_error: Optional[str] = None
+        self.active_provider: str = "None"
+        self.inference_device: str = "cpu"
 
         # In-memory fast cache of speaker_id -> np.ndarray (192,)
         self._enrolled_embeddings: Dict[str, np.ndarray] = {}
@@ -87,6 +89,8 @@ class ECAPAService:
         if not HAS_ORT or not os.path.exists(self.onnx_path):
             self.load_error = f"ECAPA ONNX model not found at {self.onnx_path}"
             self.is_onnx_loaded = False
+            self.active_provider = "None"
+            self.inference_device = "cpu"
             return
 
         try:
@@ -96,11 +100,25 @@ class ECAPAService:
                 providers.append("CUDAExecutionProvider")
             providers.append("CPUExecutionProvider")
 
-            self.ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
+            sess_options = ort.SessionOptions()
+            sess_options.intra_op_num_threads = 4
+            sess_options.inter_op_num_threads = 1
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_options.enable_mem_pattern = True
+            sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+            self.ort_session = ort.InferenceSession(
+                self.onnx_path, sess_options=sess_options, providers=providers
+            )
             self.is_onnx_loaded = True
+            active_list = self.ort_session.get_providers()
+            self.active_provider = active_list[0] if active_list else "CPUExecutionProvider"
+            self.inference_device = "cuda" if "CUDA" in self.active_provider else "cpu"
         except Exception as err:
             self.load_error = f"ECAPA ONNX session initialization failed: {err}"
             self.is_onnx_loaded = False
+            self.active_provider = "None"
+            self.inference_device = "cpu"
 
     def _load_speechbrain_model(self) -> None:
         """Loads SpeechBrain ECAPA-TDNN classifier."""
@@ -168,32 +186,30 @@ class ECAPAService:
                 audio_np = int16_data.astype(np.float32) / 32768.0
 
             audio_np = np.clip(audio_np, -1.0, 1.0)
-            wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
         elif isinstance(audio, np.ndarray):
             if audio.dtype == np.int16:
                 audio_np = audio.astype(np.float32) / 32768.0
+            elif audio.dtype == np.float32:
+                audio_np = audio
             else:
                 audio_np = audio.astype(np.float32)
             if audio_np.ndim > 1:
                 audio_np = audio_np.flatten()
             audio_np = np.clip(audio_np, -1.0, 1.0)
-            wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
+        elif isinstance(audio, torch.Tensor):
+            t = audio.detach().cpu().float()
+            if t.dim() > 1:
+                t = t.squeeze()
+            audio_np = np.clip(t.numpy(), -1.0, 1.0)
         else:
-            wav_tensor = audio.detach().cpu().float()
-            if wav_tensor.dim() > 1:
-                wav_tensor = wav_tensor.squeeze()
-            if wav_tensor.dim() == 0:
-                wav_tensor = wav_tensor.unsqueeze(0)
-            audio_np = np.clip(wav_tensor.numpy(), -1.0, 1.0)
-            wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
+            audio_np = np.clip(np.asarray(audio, dtype=np.float32).flatten(), -1.0, 1.0)
 
         # 1. High-Performance ONNX Runtime Fast Path
         if self.is_onnx_loaded and self.ort_session is not None:
             try:
-                if wav_tensor.dim() == 1:
-                    arr = wav_tensor.unsqueeze(0).cpu().numpy().astype(np.float32)
-                else:
-                    arr = wav_tensor.cpu().numpy().astype(np.float32)
+                arr = audio_np if audio_np.ndim == 2 else np.expand_dims(audio_np, axis=0)
+                if not arr.flags["C_CONTIGUOUS"]:
+                    arr = np.ascontiguousarray(arr)
                 ort_out = self.ort_session.run(["embedding"], {"audio_input": arr})[0]
                 emb = np.squeeze(ort_out)
                 norm = np.linalg.norm(emb) + 1e-9
@@ -204,6 +220,7 @@ class ECAPAService:
                 )
 
         # 2. PyTorch SpeechBrain Live Classifier Path
+        wav_tensor = torch.from_numpy(audio_np).unsqueeze(0)
         if self.is_loaded and self.classifier is not None:
             try:
                 wav_dev = wav_tensor.to(self.device)

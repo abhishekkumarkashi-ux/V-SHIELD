@@ -4,6 +4,7 @@ FastAPI Real-Time Voice Integrity & Fraud Prevention Gateway.
 WebSocket Ingestion (/ws/live-call) & Biometric Speaker Verification.
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -37,6 +38,7 @@ from app.models.aasist_service import AASISTService
 from app.models.ecapa_service import ECAPAService
 from app.schemas.telemetry import (
     AudioMetricsPacket,
+    PerformanceTelemetry,
     SpeakerEnrollResponse,
     SpeakerProfile,
     SystemHealthResponse,
@@ -352,6 +354,19 @@ async def websocket_live_call(
     consecutive_high_risk_windows = 0
     last_metrics_report_time = 0.0
 
+    # Rule 13: Bounded Audio Ingestion Queue with Backpressure
+    audio_queue: list = []
+    MAX_QUEUE_CHUNKS = 10
+    dropped_chunks_count = 0
+    rolling_latencies: list = []
+
+    # Rule 10: Intelligent ECAPA Scheduling & Caching
+    last_ecapa_time: float = 0.0
+    last_ecapa_speaker_id: Optional[str] = None
+    cached_spk_verif: Optional[dict] = None
+    ECAPA_INTERVAL_SEC: float = 2.0
+    ECAPA_CACHE_EXPIRY_SEC: float = 5.0
+
     try:
         while True:
             message = await websocket.receive()
@@ -535,8 +550,20 @@ async def websocket_live_call(
                 if pipeline_state in ("READY", "WAITING_FOR_AUDIO"):
                     pipeline_state = "LISTENING"
 
+                # Bounded queue backpressure (Rule 13)
+                if len(audio_queue) >= MAX_QUEUE_CHUNKS:
+                    audio_queue.pop(0)
+                    dropped_chunks_count += 1
+                    print(
+                        f"[OVERLOAD] Backpressure: dropped oldest audio chunk (total dropped={dropped_chunks_count})"
+                    )
+                audio_queue.append(audio_samples)
+
+                # Drain queue into circular buffer
                 try:
-                    buffer.append_samples(audio_samples)
+                    while audio_queue:
+                        chunk_to_append = audio_queue.pop(0)
+                        buffer.append_samples(chunk_to_append)
                 except Exception as buf_err:
                     await websocket.send_text(
                         json.dumps(
@@ -563,29 +590,65 @@ async def websocket_live_call(
                         )
                         audio_buffer_ms = round((time.perf_counter() - t_vad_start) * 1000.0, 2)
 
-                        # 2. AASIST Anti-Spoofing Inference (RawLogits & Softmax Spoof Prob)
-                        t_inf_start = time.perf_counter()
-                        _, spoof_prob = aasist_service.predict(safe_audio)
-                        inference_ms = round((time.perf_counter() - t_inf_start) * 1000.0, 2)
+                        now_mono = time.monotonic()
+                        # ECAPA Intelligent Scheduling (Rule 10):
+                        # Run ECAPA if speech is active AND (no cache OR speaker changed OR interval reached)
+                        should_run_ecapa = is_speech_active and (
+                            cached_spk_verif is None
+                            or active_speaker_id != last_ecapa_speaker_id
+                            or (now_mono - last_ecapa_time >= ECAPA_INTERVAL_SEC)
+                        )
 
-                        # 3. ECAPA-TDNN Speaker Biometric Verification
-                        t_spk_start = time.perf_counter()
-                        spk_verif = ecapa_service.verify_speaker_detailed(
-                            safe_audio, active_speaker_id
-                        )
-                        speaker_verification_ms = round(
-                            (time.perf_counter() - t_spk_start) * 1000.0, 2
-                        )
+                        t_inf_start = time.perf_counter()
+                        if should_run_ecapa:
+                            # Concurrently execute AASIST and ECAPA in parallel threads (Rule 11)
+                            aasist_res, spk_verif = await asyncio.gather(
+                                asyncio.to_thread(aasist_service.predict, safe_audio),
+                                asyncio.to_thread(
+                                    ecapa_service.verify_speaker_detailed,
+                                    safe_audio,
+                                    active_speaker_id,
+                                ),
+                            )
+                            t_inf_end = time.perf_counter()
+                            _, spoof_prob = aasist_res
+                            inference_ms = round((t_inf_end - t_inf_start) * 1000.0, 2)
+                            speaker_verification_ms = inference_ms
+                            last_ecapa_time = now_mono
+                            last_ecapa_speaker_id = active_speaker_id
+                            cached_spk_verif = spk_verif
+                        else:
+                            # AASIST continuous execution; reuse valid cached speaker verification (Rule 10)
+                            aasist_res = await asyncio.to_thread(aasist_service.predict, safe_audio)
+                            t_inf_end = time.perf_counter()
+                            _, spoof_prob = aasist_res
+                            inference_ms = round((t_inf_end - t_inf_start) * 1000.0, 2)
+                            speaker_verification_ms = 0.0
+                            if cached_spk_verif is not None and (
+                                now_mono - last_ecapa_time < ECAPA_CACHE_EXPIRY_SEC
+                            ):
+                                spk_verif = cached_spk_verif
+                            else:
+                                spk_verif = {
+                                    "status": "EVALUATING" if is_speech_active else "NO_SPEECH",
+                                    "similarity": None,
+                                    "speaker_id": active_speaker_id,
+                                    "is_match": False,
+                                    "has_voiceprint": False,
+                                }
+
                         speaker_similarity = spk_verif["similarity"]
                         speaker_status = spk_verif["status"]
 
                         # 4. Multi-Signal Fusion & Dynamic Risk Aggregation
+                        t_risk_start = time.perf_counter()
                         risk_eval = risk_engine.evaluate_detailed(
                             spoof_prob=spoof_prob,
                             speaker_similarity=speaker_similarity,
                             is_speech_active=is_speech_active,
                             speech_ratio=speech_ratio,
                         )
+                        risk_engine_ms = round((time.perf_counter() - t_risk_start) * 1000.0, 2)
                         risk_score = risk_eval["risk_score"]
                         classification = risk_eval["classification"]
                         recommended_action = risk_eval["recommended_action"]
@@ -612,6 +675,35 @@ async def websocket_live_call(
 
                         rms_energy = buffer.get_current_rms()
                         total_ms = round((time.perf_counter() - t_start) * 1000.0, 2)
+                        rolling_latencies.append(total_ms)
+                        if len(rolling_latencies) > 20:
+                            rolling_latencies.pop(0)
+                        actual_p50 = float(np.median(rolling_latencies))
+
+                        provider = getattr(
+                            aasist_service, "active_provider", "CPUExecutionProvider"
+                        )
+                        device = getattr(aasist_service, "inference_device", "cpu")
+                        hop_budget_ms = 500.0
+                        performance_status = (
+                            "DEGRADED"
+                            if (device == "cpu" and actual_p50 > hop_budget_ms)
+                            else "OPTIMAL"
+                        )
+
+                        perf_telemetry = PerformanceTelemetry(
+                            preprocess_ms=audio_buffer_ms,
+                            aasist_ms=inference_ms,
+                            ecapa_ms=speaker_verification_ms,
+                            risk_engine_ms=risk_engine_ms,
+                            total_ms=total_ms,
+                            provider=provider,
+                            device=device,
+                            performance_status=performance_status,
+                            hop_budget_ms=hop_budget_ms,
+                            actual_p50_ms=round(actual_p50, 2),
+                        )
+
                         latency_breakdown = {
                             "audio_buffer_ms": audio_buffer_ms,
                             "inference_ms": inference_ms,
@@ -644,12 +736,20 @@ async def websocket_live_call(
                             pipeline_status="ANALYZING",
                             speaker_status=speaker_status,
                             latency=latency_breakdown,
+                            performance=perf_telemetry,
+                            performance_status=performance_status,
                         )
 
                         packet_dict = packet.model_dump()
                         packet_dict["type"] = "analysis"
                         packet_dict["session_id"] = session_id
                         packet_dict["latency"] = latency_breakdown
+                        packet_dict["performance"] = perf_telemetry.model_dump()
+                        packet_dict["performance_status"] = performance_status
+                        if dropped_chunks_count > 0:
+                            packet_dict["performance"]["dropped_chunks"] = dropped_chunks_count
+                            packet_dict["performance"]["backpressure"] = True
+
                         packet_dict["anti_spoof"] = {
                             "score": round(spoof_prob, 4),
                             "label": (
@@ -847,6 +947,9 @@ async def websocket_live_call(
                         active_audio_format = payload["format"]
                     buffer.reset()
                     risk_engine.reset()
+                    audio_queue.clear()
+                    cached_spk_verif = None
+                    last_ecapa_time = 0.0
                     last_metrics_report_time = 0.0
                     await websocket.send_text(
                         json.dumps(
@@ -867,6 +970,9 @@ async def websocket_live_call(
                     pipeline_state = "READY"
                     buffer.reset()
                     risk_engine.reset()
+                    audio_queue.clear()
+                    cached_spk_verif = None
+                    last_ecapa_time = 0.0
                     last_metrics_report_time = 0.0
                     # Do NOT close the WebSocket on normal stop
                     await websocket.send_text(
@@ -883,6 +989,9 @@ async def websocket_live_call(
                 elif msg_type == "reset":
                     buffer.reset()
                     risk_engine.reset()
+                    audio_queue.clear()
+                    cached_spk_verif = None
+                    last_ecapa_time = 0.0
                     last_metrics_report_time = 0.0
                     pipeline_state = "WAITING_FOR_AUDIO" if analysis_session.is_active else "READY"
                     await websocket.send_text(
@@ -911,6 +1020,8 @@ async def websocket_live_call(
                     )
 
                 elif msg_type == "switch_speaker" or "speaker_id" in payload:
+                    cached_spk_verif = None
+                    last_ecapa_time = 0.0
                     if "speaker_id" in payload:
                         active_speaker_id = payload["speaker_id"]
                     if "target_phone" in payload:

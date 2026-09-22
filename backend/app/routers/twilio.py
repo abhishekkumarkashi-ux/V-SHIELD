@@ -364,22 +364,28 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                         )
                         audio_buffer_ms = round((time.perf_counter() - t_vad_start) * 1000.0, 2)
 
-                        # 4b. AASIST Anti-Spoofing Inference (Phase 8)
+                        # 4b & 4c. Parallel Model Inference: AASIST Anti-Spoofing & ECAPA Biometrics (Rule 11)
                         t_inf_start = time.perf_counter()
-                        _, spoof_prob = aasist_service.predict(safe_audio)
-                        inference_ms = round((time.perf_counter() - t_inf_start) * 1000.0, 2)
-
-                        # 4c. ECAPA Speaker Verification (Phase 9)
-                        t_spk_start = time.perf_counter()
                         target_spk = state.target_speaker_id
                         if target_spk:
-                            spk_verif = ecapa_service.verify_speaker_detailed(
-                                safe_audio, target_spk
+                            aasist_res, spk_verif = await asyncio.gather(
+                                asyncio.to_thread(aasist_service.predict, safe_audio),
+                                asyncio.to_thread(
+                                    ecapa_service.verify_speaker_detailed, safe_audio, target_spk
+                                ),
                             )
+                            t_inf_end = time.perf_counter()
+                            _, spoof_prob = aasist_res
+                            inference_ms = round((t_inf_end - t_inf_start) * 1000.0, 2)
+                            speaker_verification_ms = inference_ms
                             speaker_similarity = spk_verif["similarity"]
                             speaker_status = spk_verif["status"]
                         else:
-                            # Explicit unenrolled state per Phase 9
+                            aasist_res = await asyncio.to_thread(aasist_service.predict, safe_audio)
+                            t_inf_end = time.perf_counter()
+                            _, spoof_prob = aasist_res
+                            inference_ms = round((t_inf_end - t_inf_start) * 1000.0, 2)
+                            speaker_verification_ms = 0.0
                             speaker_similarity = None
                             speaker_status = "NO_REFERENCE"
                             spk_verif = {
@@ -389,9 +395,6 @@ async def handle_twilio_stream_session(websocket: WebSocket) -> None:
                                 "is_match": False,
                                 "has_voiceprint": False,
                             }
-                        speaker_verification_ms = round(
-                            (time.perf_counter() - t_spk_start) * 1000.0, 2
-                        )
 
                         # 4d. Authoritative Multi-Signal Risk Engine Evaluation (Phase 10)
                         risk_eval = state.risk_engine.evaluate_detailed(

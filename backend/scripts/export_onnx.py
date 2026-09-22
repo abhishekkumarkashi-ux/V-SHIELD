@@ -4,15 +4,16 @@ Exports AASIST anti-spoofing and ECAPA-TDNN speaker verification models
 to optimized FP16 ONNX format with dynamic batch and time dimensions.
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
+
 import numpy as np
+import onnx
+import onnxruntime as ort
 import torch
 import torch.nn as nn
-import onnx
 from onnxconverter_common import float16
-import onnxruntime as ort
 
 # Ensure UTF-8 standard output on Windows
 if sys.platform == "win32":
@@ -29,13 +30,15 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.config import settings
-from app.models.aasist import Model as AASISTModel, DEFAULT_AASIST_CONFIG
+from app.models.aasist import DEFAULT_AASIST_CONFIG
+from app.models.aasist import Model as AASISTModel
 
 
 class AASISTWrapper(nn.Module):
     """
     Wraps AASIST to output raw logits (batch_size, 2) directly.
     """
+
     def __init__(self, model: nn.Module):
         super().__init__()
         self.model = model
@@ -50,6 +53,7 @@ class ECAPAWrapper(nn.Module):
     Wraps SpeechBrain ECAPA-TDNN classifier to accept waveform tensors (batch, time)
     and output 192-dimensional embeddings (batch, 192).
     """
+
     def __init__(self, classifier):
         super().__init__()
         self.classifier = classifier
@@ -63,7 +67,7 @@ class ECAPAWrapper(nn.Module):
 def export_aasist(
     checkpoint_path: Path = settings.AASIST_WEIGHTS_PATH,
     output_path: Path = settings.AASIST_ONNX_PATH,
-    opset_version: int = 18
+    opset_version: int = 18,
 ) -> Path:
     """
     Exports PyTorch AASIST model to ONNX FP16.
@@ -84,19 +88,18 @@ def export_aasist(
     temp_fp32_path = output_path.parent / "aasist_temp_fp32.onnx"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[AASIST Export] Exporting FP32 ONNX graph to {temp_fp32_path} (Opset {opset_version})...")
+    print(
+        f"[AASIST Export] Exporting FP32 ONNX graph to {temp_fp32_path} (Opset {opset_version})..."
+    )
     torch.onnx.export(
         wrapper,
         dummy_input,
         str(temp_fp32_path),
         input_names=["audio_input"],
         output_names=["logits"],
-        dynamic_axes={
-            "audio_input": {0: "batch_size"},
-            "logits": {0: "batch_size"}
-        },
+        dynamic_axes={"audio_input": {0: "batch_size"}, "logits": {0: "batch_size"}},
         opset_version=opset_version,
-        do_constant_folding=True
+        do_constant_folding=True,
     )
 
     print("[AASIST Export] Converting ONNX graph to FP16 with keep_io_types=True...")
@@ -126,14 +129,11 @@ def export_aasist(
     return output_path
 
 
-def export_ecapa(
-    output_path: Path = settings.ECAPA_ONNX_PATH,
-    opset_version: int = 18
-) -> Path:
+def export_ecapa(output_path: Path = settings.ECAPA_ONNX_PATH, opset_version: int = 18) -> Path:
     """
     Exports SpeechBrain ECAPA-TDNN speaker verification model to ONNX FP16.
     """
-    print(f"\n[ECAPA Export] Loading SpeechBrain spkrec-ecapa-voxceleb...")
+    print("\n[ECAPA Export] Loading SpeechBrain spkrec-ecapa-voxceleb...")
     from speechbrain.inference.classifiers import EncoderClassifier
     from speechbrain.utils.fetching import LocalStrategy
 
@@ -144,7 +144,7 @@ def export_ecapa(
         source="speechbrain/spkrec-ecapa-voxceleb",
         savedir=str(speechbrain_dir),
         run_opts={"device": "cpu"},
-        local_strategy=LocalStrategy.COPY
+        local_strategy=LocalStrategy.COPY,
     )
 
     wrapper = ECAPAWrapper(classifier)
@@ -154,19 +154,18 @@ def export_ecapa(
     temp_fp32_path = output_path.parent / "ecapa_temp_fp32.onnx"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[ECAPA Export] Exporting FP32 ONNX graph to {temp_fp32_path} (Opset {opset_version})...")
+    print(
+        f"[ECAPA Export] Exporting FP32 ONNX graph to {temp_fp32_path} (Opset {opset_version})..."
+    )
     torch.onnx.export(
         wrapper,
         dummy_input,
         str(temp_fp32_path),
         input_names=["audio_input"],
         output_names=["embedding"],
-        dynamic_axes={
-            "audio_input": {0: "batch_size", 1: "time"},
-            "embedding": {0: "batch_size"}
-        },
+        dynamic_axes={"audio_input": {0: "batch_size", 1: "time"}, "embedding": {0: "batch_size"}},
         opset_version=opset_version,
-        do_constant_folding=True
+        do_constant_folding=True,
     )
 
     print("[ECAPA Export] Attempting FP16 graph conversion with keep_io_types=True...")
@@ -183,7 +182,9 @@ def export_ecapa(
         use_fp16 = True
         print("[ECAPA Export] FP16 session initialized successfully!")
     except Exception as conv_err:
-        print(f"[ECAPA Export] Note: ONNX Runtime CPU requires float32 for STFT operations ({conv_err}).")
+        print(
+            f"[ECAPA Export] Note: ONNX Runtime CPU requires float32 for STFT operations ({conv_err})."
+        )
         print("[ECAPA Export] Utilizing optimized ONNX model graph.")
 
     if use_fp16 and temp_fp16_path.exists():
@@ -207,7 +208,9 @@ def export_ecapa(
         temp_fp32_path.unlink()
 
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"[ECAPA Export] Successfully generated self-contained: {output_path} ({file_size_mb:.2f} MB)")
+    print(
+        f"[ECAPA Export] Successfully generated self-contained: {output_path} ({file_size_mb:.2f} MB)"
+    )
 
     # Numerical verification against PyTorch
     print("[ECAPA Export] Performing numerical equivalence verification...")
@@ -236,6 +239,7 @@ def main():
     except Exception as e:
         print(f"\n[ERROR] AASIST export failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
@@ -245,6 +249,7 @@ def main():
     except Exception as e:
         print(f"\n[ERROR] ECAPA export failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

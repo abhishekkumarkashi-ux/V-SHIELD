@@ -1,0 +1,3 @@
+# V-SHIELD Lightweight CPU-Only Dependencies (CI & CPU Environments)
+# Conforms to V-SHIELD Phase 25 Rule 6
+-r requirements.txt

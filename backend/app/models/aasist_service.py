@@ -72,6 +72,8 @@ class AASISTModelAdapter:
         self._is_onnx_loaded: bool = False
         self._is_loaded: bool = False
         self.load_error: Optional[str] = None
+        self.active_provider: str = "None"
+        self.inference_device: str = "cpu"
 
         self.load()
 
@@ -111,6 +113,8 @@ class AASISTModelAdapter:
         if not HAS_ORT or not os.path.exists(self.onnx_path):
             self.load_error = f"ONNX model file not found at {self.onnx_path}"
             self._is_onnx_loaded = False
+            self.active_provider = "None"
+            self.inference_device = "cpu"
             return
 
         try:
@@ -120,11 +124,25 @@ class AASISTModelAdapter:
                 providers.append("CUDAExecutionProvider")
             providers.append("CPUExecutionProvider")
 
-            self.ort_session = ort.InferenceSession(self.onnx_path, providers=providers)
+            sess_options = ort.SessionOptions()
+            sess_options.intra_op_num_threads = 4
+            sess_options.inter_op_num_threads = 1
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_options.enable_mem_pattern = True
+            sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+            self.ort_session = ort.InferenceSession(
+                self.onnx_path, sess_options=sess_options, providers=providers
+            )
             self._is_onnx_loaded = True
+            active_list = self.ort_session.get_providers()
+            self.active_provider = active_list[0] if active_list else "CPUExecutionProvider"
+            self.inference_device = "cuda" if "CUDA" in self.active_provider else "cpu"
         except Exception as err:
             self.load_error = f"ONNX session initialization failed: {err}"
             self._is_onnx_loaded = False
+            self.active_provider = "None"
+            self.inference_device = "cpu"
 
     def _initialize_model(self) -> None:
         """Instantiates PyTorch AASIST model from local weights without network downloads."""
@@ -147,14 +165,23 @@ class AASISTModelAdapter:
                 self.load_error = f"PyTorch AASIST initialization failed: {err}"
             self._is_loaded = False
 
-    def predict_spoof_prob(self, audio_np: np.ndarray) -> float:
+    def predict_spoof_prob(self, audio_np: Union[np.ndarray, torch.Tensor]) -> float:
         """
         High-performance ONNX Runtime inference returning P(spoof) directly.
-        Accepts numpy array of shape (1, 64600) or (64600,) float32.
+        Accepts numpy array or tensor of shape (1, 64600) or (64600,) float32.
+        Avoids unnecessary intermediate tensor copies.
         """
-        arr = np.asarray(audio_np, dtype=np.float32)
+        if isinstance(audio_np, np.ndarray):
+            arr = audio_np if audio_np.dtype == np.float32 else audio_np.astype(np.float32)
+        elif isinstance(audio_np, torch.Tensor):
+            arr = audio_np.detach().cpu().numpy().astype(np.float32)
+        else:
+            arr = np.asarray(audio_np, dtype=np.float32)
+
         if arr.ndim == 1:
             arr = np.expand_dims(arr, axis=0)
+        elif arr.ndim == 3:
+            arr = np.squeeze(arr, axis=1)
 
         target_len = settings.WINDOW_SIZE
         cur_len = arr.shape[-1]
@@ -163,6 +190,9 @@ class AASISTModelAdapter:
             arr = np.pad(arr, ((0, 0), (0, pad_amount)), mode="constant")
         elif cur_len > target_len:
             arr = arr[:, :target_len]
+
+        if not arr.flags["C_CONTIGUOUS"]:
+            arr = np.ascontiguousarray(arr)
 
         if self._is_onnx_loaded and self.ort_session is not None:
             try:
@@ -186,29 +216,33 @@ class AASISTModelAdapter:
             logits (torch.Tensor): [bona_fide_score, spoof_score]
             spoof_probability (float): Softmax(logits)[1]
         """
-        if isinstance(audio, np.ndarray):
-            x = torch.from_numpy(audio.astype(np.float32))
-        else:
-            x = audio.detach()
-
-        # Format input tensor to exactly (1, 64600)
-        if x.dim() == 1:
-            x = x.unsqueeze(0)
-        elif x.dim() == 3:
-            x = x.squeeze(1)
-
         target_len = settings.WINDOW_SIZE
-        cur_len = x.size(-1)
-        if cur_len < target_len:
-            pad_amount = target_len - cur_len
-            x = F.pad(x, (0, pad_amount), "constant", 0)
-        elif cur_len > target_len:
-            x = x[:, :target_len]
 
-        # 1. Try ONNX Runtime fast path
+        # 1. Try ONNX Runtime fast path directly without converting np -> torch -> np
         if self._is_onnx_loaded and self.ort_session is not None:
             try:
-                arr = x.cpu().numpy().astype(np.float32)
+                if isinstance(audio, np.ndarray):
+                    arr = audio if audio.dtype == np.float32 else audio.astype(np.float32)
+                elif isinstance(audio, torch.Tensor):
+                    arr = audio.detach().cpu().numpy().astype(np.float32)
+                else:
+                    arr = np.asarray(audio, dtype=np.float32)
+
+                if arr.ndim == 1:
+                    arr = np.expand_dims(arr, axis=0)
+                elif arr.ndim == 3:
+                    arr = np.squeeze(arr, axis=1)
+
+                cur_len = arr.shape[-1]
+                if cur_len < target_len:
+                    pad_amount = target_len - cur_len
+                    arr = np.pad(arr, ((0, 0), (0, pad_amount)), mode="constant")
+                elif cur_len > target_len:
+                    arr = arr[:, :target_len]
+
+                if not arr.flags["C_CONTIGUOUS"]:
+                    arr = np.ascontiguousarray(arr)
+
                 ort_logits = self.ort_session.run(["logits"], {"audio_input": arr})[0]
                 exp_logits = np.exp(ort_logits - np.max(ort_logits, axis=-1, keepdims=True))
                 probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
@@ -220,6 +254,24 @@ class AASISTModelAdapter:
                 )
 
         # 2. PyTorch Native Fallback
+        if isinstance(audio, np.ndarray):
+            x = torch.from_numpy(audio.astype(np.float32))
+        else:
+            x = audio.detach()
+
+        # Format input tensor to exactly (1, 64600)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        elif x.dim() == 3:
+            x = x.squeeze(1)
+
+        cur_len = x.size(-1)
+        if cur_len < target_len:
+            pad_amount = target_len - cur_len
+            x = F.pad(x, (0, pad_amount), "constant", 0)
+        elif cur_len > target_len:
+            x = x[:, :target_len]
+
         if not self._is_loaded or self.model is None:
             self._initialize_model()
 

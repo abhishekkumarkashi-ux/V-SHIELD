@@ -1,0 +1,139 @@
+{
+  "environment": {
+    "onnxruntime_version": "1.30.0",
+    "pytorch_version": "2.14.0+cpu",
+    "cuda_available": false,
+    "active_aasist_providers": [
+      "CPUExecutionProvider"
+    ],
+    "active_ecapa_providers": [
+      "CPUExecutionProvider"
+    ],
+    "cold_aasist_init_ms": 1065.37,
+    "cold_ecapa_init_ms": 2349.53
+  },
+  "cold_start": {
+    "1_audio_preprocessing": 0.08999998681247234,
+    "2_vad": 5.4373000166378915,
+    "3_audio_buffer": 1.2026000185869634,
+    "4_aasist_preprocessing": 0.0858000130392611,
+    "5_aasist_onnx_inference": 1084.1450999723747,
+    "6_aasist_postprocessing": 0.685499981045723,
+    "7_ecapa_preprocessing": 1.4797000330872834,
+    "8_ecapa_onnx_inference": 480.38279998581856,
+    "9_ecapa_postprocessing": 0.16330002108588815,
+    "10_risk_engine": 0.10350003140047193,
+    "11_websocket_telemetry": 4.40769997658208,
+    "12_complete_hop": 1578.2951000146568
+  },
+  "warm_inference": {
+    "1_audio_preprocessing": {
+      "p50": 0.1,
+      "p95": 0.166,
+      "p99": 0.176,
+      "min": 0.074,
+      "max": 0.176,
+      "mean": 0.107,
+      "count": 25
+    },
+    "2_vad": {
+      "p50": 1.127,
+      "p95": 1.573,
+      "p99": 1.968,
+      "min": 0.781,
+      "max": 2.082,
+      "mean": 1.158,
+      "count": 25
+    },
+    "3_audio_buffer": {
+      "p50": 0.222,
+      "p95": 0.258,
+      "p99": 0.259,
+      "min": 0.161,
+      "max": 0.259,
+      "mean": 0.216,
+      "count": 25
+    },
+    "4_aasist_preprocessing": {
+      "p50": 0.109,
+      "p95": 0.256,
+      "p99": 0.439,
+      "min": 0.048,
+      "max": 0.496,
+      "mean": 0.129,
+      "count": 25
+    },
+    "5_aasist_onnx_inference": {
+      "p50": 679.245,
+      "p95": 848.75,
+      "p99": 882.153,
+      "min": 603.166,
+      "max": 884.748,
+      "mean": 693.342,
+      "count": 25
+    },
+    "6_aasist_postprocessing": {
+      "p50": 0.136,
+      "p95": 0.209,
+      "p99": 0.261,
+      "min": 0.107,
+      "max": 0.274,
+      "mean": 0.141,
+      "count": 25
+    },
+    "7_ecapa_preprocessing": {
+      "p50": 0.308,
+      "p95": 0.531,
+      "p99": 0.635,
+      "min": 0.248,
+      "max": 0.667,
+      "mean": 0.345,
+      "count": 25
+    },
+    "8_ecapa_onnx_inference": {
+      "p50": 309.448,
+      "p95": 383.387,
+      "p99": 477.711,
+      "min": 271.198,
+      "max": 506.336,
+      "mean": 318.61,
+      "count": 25
+    },
+    "9_ecapa_postprocessing": {
+      "p50": 0.118,
+      "p95": 0.16,
+      "p99": 0.161,
+      "min": 0.101,
+      "max": 0.161,
+      "mean": 0.124,
+      "count": 25
+    },
+    "10_risk_engine": {
+      "p50": 0.056,
+      "p95": 0.125,
+      "p99": 0.147,
+      "min": 0.044,
+      "max": 0.151,
+      "mean": 0.065,
+      "count": 25
+    },
+    "11_websocket_telemetry": {
+      "p50": 0.207,
+      "p95": 0.257,
+      "p99": 0.26,
+      "min": 0.161,
+      "max": 0.261,
+      "mean": 0.214,
+      "count": 25
+    },
+    "12_complete_hop": {
+      "p50": 1000.075,
+      "p95": 1222.87,
+      "p99": 1256.219,
+      "min": 880.061,
+      "max": 1264.005,
+      "mean": 1014.546,
+      "count": 25
+    }
+  }
+}
