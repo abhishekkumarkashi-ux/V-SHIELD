@@ -114,8 +114,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const loginWithGoogle = () => {
     setError(null);
-    // Direct browser redirect to backend Google OAuth initiation endpoint
-    window.location.href = '/api/v1/auth/google/login';
+    const backendUrl = import.meta.env.VITE_API_URL
+      ? import.meta.env.VITE_API_URL.replace(/\/+$/, '')
+      : '';
+    window.location.href = `${backendUrl}/api/v1/auth/google/login`;
   };
 
   const logout = async () => {

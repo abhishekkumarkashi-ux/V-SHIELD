@@ -80,8 +80,14 @@ interface UseVShieldSocketProps {
   onPacketReceived?: (packet: TelemetryPacket) => void;
 }
 
+const DEFAULT_WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  (typeof window !== 'undefined' && window.location.protocol === 'https:'
+    ? `wss://${window.location.host}/ws/live-call`
+    : 'ws://localhost:8000/ws/live-call');
+
 export function useVShieldSocket({
-  url = 'ws://localhost:8000/ws/live-call',
+  url = DEFAULT_WS_URL,
   speakerId = null,
   token = null,
   onPacketReceived,

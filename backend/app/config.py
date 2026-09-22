@@ -8,6 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("vshield.config")
 
+# Project root resolution for robust local development environment loading
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent.parent
+ROOT_ENV_PATH: Path = PROJECT_ROOT / ".env"
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "V-SHIELD"
@@ -69,13 +73,23 @@ class Settings(BaseSettings):
     DEMO_OPERATOR_USERNAME: str = "analyst@vshield.internal"
     DEMO_OPERATOR_PASSWORD: Optional[str] = None
 
+    # Network & Deployment Topology
+    PORT: int = 8000
+    HOST: str = "0.0.0.0"
+    BACKEND_URL: str = "http://localhost:8000"
+    DATABASE_URL: Optional[str] = None
+
     # Google OAuth 2.0 / OpenID Connect (Configurable)
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
     FRONTEND_URL: str = "http://localhost:5173"
 
-    model_config = SettingsConfigDict(env_file=".env", extra="allow")
+    model_config = SettingsConfigDict(
+        env_file=(str(ROOT_ENV_PATH), ".env"),
+        env_file_encoding="utf-8",
+        extra="allow",
+    )
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -134,6 +148,12 @@ class Settings(BaseSettings):
                     "http://127.0.0.1:5173",
                     "http://localhost:3000",
                 ]
+
+        # Ensure FRONTEND_URL is included in authorized CORS origins
+        if self.FRONTEND_URL and self.FRONTEND_URL.startswith("http"):
+            clean_origin = self.FRONTEND_URL.strip().rstrip("/")
+            if clean_origin and clean_origin not in self.CORS_ORIGINS:
+                self.CORS_ORIGINS.append(clean_origin)
 
         return self
 

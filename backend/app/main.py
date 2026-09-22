@@ -112,6 +112,9 @@ def print_startup_banner() -> None:
     else:
         ecapa_desc = "ECAPA-TDNN (Offline acoustic signature)"
 
+    oauth_configured = bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET)
+    oauth_status = "YES (Configured)" if oauth_configured else "NO (Credentials not set)"
+
     banner = f"""
 ==================================================
 V-SHIELD BACKEND STARTUP
@@ -128,6 +131,7 @@ Speaker verification loaded:{ecapa_loaded}
 Risk engine:                Multi-Signal EMA Fusion (alpha={settings.RISK_ALPHA})
 Risk engine loaded:         True
 Enrolled speakers:          {len(ecapa_service.get_enrolled_speakers())} profiles
+Google OAuth configured:    {oauth_status}
 ==================================================
 """
     print(banner.strip(), flush=True)
@@ -1063,6 +1067,10 @@ async def websocket_twilio_stream(websocket: WebSocket):
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", getattr(settings, "PORT", 8000)))
+    host = os.environ.get("HOST", getattr(settings, "HOST", "0.0.0.0"))
+    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+    uvicorn.run("app.main:app", host=host, port=port, reload=not is_prod)

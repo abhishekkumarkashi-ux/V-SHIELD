@@ -389,7 +389,9 @@ const AuthenticatedApp: React.FC = () => {
             </button>
           </div>
           <span className="hidden sm:inline-block text-[11px] font-mono text-slate-500">
-            {activeTab === 'live' ? 'Protocol: ws://localhost:8000/ws/live-call' : 'Endpoint: POST /api/v1/analyze-file'}
+            {activeTab === 'live'
+              ? `Protocol: ${import.meta.env.VITE_WS_URL || (typeof window !== 'undefined' && window.location.protocol === 'https:' ? `wss://${window.location.host}/ws/live-call` : 'ws://localhost:8000/ws/live-call')}`
+              : 'Endpoint: POST /api/v1/analyze-file'}
           </span>
         </div>
 

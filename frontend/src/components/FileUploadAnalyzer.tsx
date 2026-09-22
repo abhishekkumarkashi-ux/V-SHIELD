@@ -87,11 +87,28 @@ export const FileUploadAnalyzer: React.FC = () => {
     formData.append('reference_audio', refFile);
     formData.append('test_audio', testFile);
 
+    const apiBase = import.meta.env.VITE_API_URL
+      ? import.meta.env.VITE_API_URL.replace(/\/+$/, '')
+      : '';
+    const endpoint = apiBase ? `${apiBase}/api/v1/analyze-file` : '/api/v1/analyze-file';
+
     try {
-      const response = await fetch('http://localhost:8000/api/v1/analyze-file', {
-        method: 'POST',
-        body: formData,
-      });
+      let response: Response;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          body: formData,
+        });
+      } catch (networkErr) {
+        if (!apiBase) {
+          response = await fetch('http://localhost:8000/api/v1/analyze-file', {
+            method: 'POST',
+            body: formData,
+          });
+        } else {
+          throw networkErr;
+        }
+      }
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({ detail: 'Analysis failed' }));

@@ -13,6 +13,7 @@ import numpy as np
 import torch
 
 from app.config import settings
+from app.core.db import init_db, load_speakers_from_db, save_speaker_to_db
 
 try:
     import onnxruntime as ort
@@ -70,19 +71,8 @@ class ECAPAService:
         return cls._instance
 
     def _init_db(self) -> None:
-        """Initializes SQLite database for speaker profiles."""
-        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS speakers (
-                    speaker_id TEXT PRIMARY KEY,
-                    name TEXT,
-                    enrolled_at REAL,
-                    embedding BLOB
-                )
-            """)
-            conn.commit()
+        """Initializes database for speaker profiles (SQLite or PostgreSQL)."""
+        init_db(self.db_path)
 
     def _load_onnx_model(self) -> None:
         """Initializes ONNX Runtime session for ECAPA-TDNN embedding extraction."""
@@ -139,10 +129,9 @@ class ECAPAService:
 
     def _load_enrolled_from_db(self) -> None:
         """Populates in-memory cache from database."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT speaker_id, name, enrolled_at, embedding FROM speakers")
-            for speaker_id, name, enrolled_at, emb_bytes in cursor.fetchall():
+        records = load_speakers_from_db(self.db_path)
+        for speaker_id, name, enrolled_at, emb_bytes in records:
+            if emb_bytes:
                 emb = np.frombuffer(emb_bytes, dtype=np.float32)
                 self._enrolled_embeddings[speaker_id] = emb
                 self._enrolled_metadata[speaker_id] = {
@@ -152,13 +141,13 @@ class ECAPAService:
                 }
 
     def _save_speaker_to_db(self, speaker_id: str, name: str, embedding: np.ndarray) -> None:
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT OR REPLACE INTO speakers (speaker_id, name, enrolled_at, embedding) VALUES (?, ?, ?, ?)",
-                (speaker_id, name, time.time(), embedding.tobytes()),
-            )
-            conn.commit()
+        save_speaker_to_db(
+            speaker_id=speaker_id,
+            name=name,
+            enrolled_at=time.time(),
+            embedding_bytes=embedding.tobytes(),
+            db_path=self.db_path,
+        )
 
     def extract_embedding(self, audio: Union[bytes, np.ndarray, torch.Tensor]) -> np.ndarray:
         """

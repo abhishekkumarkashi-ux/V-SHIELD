@@ -455,3 +455,342 @@ def test_google_callback_successful_flow(monkeypatch):
     payload = verify_access_token(issued_token)
     assert payload["username"] == "analyst.google@vshield.internal"
     assert payload["role"] == "analyst"
+    client.cookies.clear()
+
+
+def test_oauth_state_generation_and_validation():
+    """Verify create_oauth_state creates valid cryptographic CSRF tokens."""
+    from app.core.auth import create_oauth_state, verify_oauth_state
+
+    state = create_oauth_state(expires_in_sec=300)
+    assert isinstance(state, str)
+    assert "." in state
+    assert verify_oauth_state(state) is True
+
+
+def test_oauth_state_expiration():
+    """Verify expired OAuth states are rejected."""
+    from app.core.auth import create_oauth_state, verify_oauth_state
+
+    expired_state = create_oauth_state(expires_in_sec=-10)
+    assert verify_oauth_state(expired_state) is False
+
+
+def test_oauth_state_tampering_rejected():
+    """Verify tampered payloads or signatures in OAuth states are rejected."""
+    from app.core.auth import create_oauth_state, verify_oauth_state
+
+    state = create_oauth_state(expires_in_sec=300)
+    parts = state.split(".")
+    assert len(parts) == 2
+
+    # 1. Tamper signature
+    tampered_sig = parts[0] + ".tampered_signature_bytes"
+    assert verify_oauth_state(tampered_sig) is False
+
+    # 2. Tamper payload
+    tampered_payload = "tampered_payload." + parts[1]
+    assert verify_oauth_state(tampered_payload) is False
+
+    # 3. Invalid format
+    assert verify_oauth_state("no_dot_in_state") is False
+    assert verify_oauth_state("") is False
+    assert verify_oauth_state("too.many.dots.here") is False
+
+
+def test_google_callback_missing_code_or_state():
+    """Verify callback rejects requests with missing code or state parameters."""
+    local_client = TestClient(app)
+    resp1 = local_client.get("/api/v1/auth/google/callback", follow_redirects=False)
+    assert resp1.status_code == 307
+    assert "error=missing_oauth_parameters" in resp1.headers["location"]
+
+    resp2 = local_client.get("/api/v1/auth/google/callback?code=some_code", follow_redirects=False)
+    assert resp2.status_code == 307
+    assert "error=missing_oauth_parameters" in resp2.headers["location"]
+
+
+def test_google_callback_missing_server_credentials(monkeypatch):
+    """Verify callback safely rejects when Google client secret is unconfigured."""
+    from app.core.auth import create_oauth_state
+
+    local_client = TestClient(app)
+    valid_state = create_oauth_state()
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "configured-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", None)
+
+    resp = local_client.get(
+        f"/api/v1/auth/google/callback?code=mock_code&state={valid_state}",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    assert "error=server_oauth_unconfigured" in resp.headers["location"]
+
+
+def test_find_or_create_google_user_lifecycle():
+    """Verify provisioning new Google users, existing lookup, and profile linking."""
+    from app.core.auth import find_or_create_google_user
+
+    test_sub = "test_sub_9988776655"
+    test_email = "new.engineer@vshield.internal"
+    test_name = "New Engineer"
+    test_pic = "https://lh3.googleusercontent.com/avatar_test"
+
+    # 1. Provision new Google user
+    user = find_or_create_google_user(
+        google_sub=test_sub,
+        email=test_email,
+        name=test_name,
+        picture=test_pic,
+    )
+    assert user["user_id"].startswith("usr_google_")
+    assert user["username"] == test_email
+    assert user["name"] == test_name
+    assert user["role"] == "analyst"
+    assert user["picture"] == test_pic
+
+    # 2. Lookup existing user by google_sub
+    existing = find_or_create_google_user(
+        google_sub=test_sub,
+        email=test_email,
+    )
+    assert existing["user_id"] == user["user_id"]
+    assert existing["username"] == test_email
+
+    # 3. Link Google sub to existing pre-configured operator
+    linked_op = find_or_create_google_user(
+        google_sub="linked_sub_12345",
+        email=settings.DEMO_OPERATOR_USERNAME,
+        name="Linked Analyst",
+    )
+    assert linked_op["username"] == settings.DEMO_OPERATOR_USERNAME
+
+
+def test_google_callback_invalid_audience_rejected(monkeypatch):
+    """Verify callback rejects Google token with mismatched audience claim."""
+    from app.core.auth import create_oauth_state
+    import httpx
+
+    local_client = TestClient(app)
+    valid_state = create_oauth_state()
+    client_id = "vshield-official-client-id"
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", client_id)
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-secret")
+
+    class MockAsyncClientAudienceMismatch:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def post(self, url, data=None):
+            return httpx.Response(200, json={"access_token": "acc", "id_token": "id_tok"})
+
+        async def get(self, url, params=None):
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "123",
+                    "email": "user@vshield.internal",
+                    "email_verified": True,
+                    "aud": "different-rogue-audience",
+                    "iss": "https://accounts.google.com",
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClientAudienceMismatch)
+
+    resp = local_client.get(
+        f"/api/v1/auth/google/callback?code=mock_code&state={valid_state}",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    assert "error=invalid_token_audience" in resp.headers["location"]
+
+
+def test_google_callback_invalid_issuer_rejected(monkeypatch):
+    """Verify callback rejects Google token with untrusted issuer claim."""
+    from app.core.auth import create_oauth_state
+    import httpx
+
+    local_client = TestClient(app)
+    valid_state = create_oauth_state()
+    client_id = "vshield-official-client-id"
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", client_id)
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-secret")
+
+    class MockAsyncClientIssuerMismatch:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def post(self, url, data=None):
+            return httpx.Response(200, json={"access_token": "acc", "id_token": "id_tok"})
+
+        async def get(self, url, params=None):
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "123",
+                    "email": "user@vshield.internal",
+                    "email_verified": True,
+                    "aud": client_id,
+                    "iss": "https://evil-untrusted-issuer.com",
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClientIssuerMismatch)
+
+    resp = local_client.get(
+        f"/api/v1/auth/google/callback?code=mock_code&state={valid_state}",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    assert "error=invalid_token_issuer" in resp.headers["location"]
+
+
+def test_google_callback_unverified_email_rejected(monkeypatch):
+    """Verify callback rejects Google token with unverified email."""
+    from app.core.auth import create_oauth_state
+    import httpx
+
+    local_client = TestClient(app)
+    valid_state = create_oauth_state()
+    client_id = "vshield-official-client-id"
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", client_id)
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-secret")
+
+    class MockAsyncClientUnverifiedEmail:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def post(self, url, data=None):
+            return httpx.Response(200, json={"access_token": "acc", "id_token": "id_tok"})
+
+        async def get(self, url, params=None):
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "123",
+                    "email": "unverified@vshield.internal",
+                    "email_verified": False,
+                    "aud": client_id,
+                    "iss": "https://accounts.google.com",
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClientUnverifiedEmail)
+
+    resp = local_client.get(
+        f"/api/v1/auth/google/callback?code=mock_code&state={valid_state}",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 307
+    assert "error=unverified_google_email" in resp.headers["location"]
+
+
+def test_google_user_auth_me_authentication(monkeypatch):
+    """Verify full end-to-end flow: Google login provisions user, issues JWT, and authenticates via /auth/me."""
+    from app.core.auth import create_oauth_state
+    import httpx
+    import urllib.parse
+
+    local_client = TestClient(app)
+    valid_state = create_oauth_state()
+    client_id = "vshield-client-id-test"
+    client_secret = "vshield-secret-test"
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", client_id)
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", client_secret)
+
+    class MockAsyncClientSuccess:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def post(self, url, data=None):
+            return httpx.Response(
+                200,
+                json={"access_token": "google_acc_tok", "id_token": "google_id_tok"},
+            )
+
+        async def get(self, url, params=None):
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "googlesub_e2e_987654",
+                    "email": "e2e.analyst@vshield.internal",
+                    "email_verified": True,
+                    "name": "E2E Analyst",
+                    "picture": "https://lh3.googleusercontent.com/a/e2e",
+                    "aud": client_id,
+                    "iss": "https://accounts.google.com",
+                },
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClientSuccess)
+
+    callback_resp = local_client.get(
+        f"/api/v1/auth/google/callback?code=valid_auth_code&state={valid_state}",
+        follow_redirects=False,
+    )
+    assert callback_resp.status_code == 307
+    location = callback_resp.headers["location"]
+    assert "auth_token=" in location
+
+    # Extract token
+    parsed = urllib.parse.urlparse(location)
+    token = urllib.parse.parse_qs(parsed.query)["auth_token"][0]
+
+    # Authenticate via /api/v1/auth/me
+    me_resp = local_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_resp.status_code == 200
+    me_data = me_resp.json()
+    assert me_data["username"] == "e2e.analyst@vshield.internal"
+    assert me_data["name"] == "E2E Analyst"
+    assert me_data["role"] == "analyst"
+    assert me_data["picture"] == "https://lh3.googleusercontent.com/a/e2e"
+
+
+def test_google_oauth_endpoint_aliases(monkeypatch):
+    """Verify /api/auth/google/login and /api/auth/google/callback aliases work identically."""
+    local_client = TestClient(app)
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", None)
+
+    # Alias /api/auth/google/login
+    resp = local_client.get("/api/auth/google/login", follow_redirects=False)
+    assert resp.status_code == 307
+    assert "error=google_not_configured" in resp.headers["location"]
+
+    # Alias /api/auth/google/callback
+    resp_cb = local_client.get("/api/auth/google/callback?error=user_cancelled", follow_redirects=False)
+    assert resp_cb.status_code == 307
+    assert "error=user_cancelled" in resp_cb.headers["location"]
+

@@ -25,24 +25,38 @@ export interface SpeakerProfile {
   enrolled_at?: number;
 }
 
-const BACKEND_BASE_URL = 'http://localhost:8000';
+const CONFIGURED_API_URL = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/+$/, '')
+  : '';
+
+export const BACKEND_BASE_URL = CONFIGURED_API_URL || 'http://localhost:8000';
+
+export function getApiUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  if (CONFIGURED_API_URL) {
+    return `${CONFIGURED_API_URL}${cleanPath}`;
+  }
+  return cleanPath;
+}
 
 /**
  * Fetches truthful backend readiness and model status.
- * Tries the Vite proxy path (/health) first, falling back to direct backend address if needed.
+ * Prioritizes configured VITE_API_URL or relative Vite proxy path (/health).
  */
 export async function fetchHealth(): Promise<SystemHealth> {
+  const url = getApiUrl('/health');
   let response: Response;
   try {
-    response = await fetch('/health');
+    response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Proxy /health returned ${response.status}`);
+      throw new Error(`Health check returned ${response.status}`);
     }
-  } catch {
-    // Direct backend fallback
-    response = await fetch(`${BACKEND_BASE_URL}/health`);
-    if (!response.ok) {
-      throw new Error(`Direct /health returned ${response.status}`);
+  } catch (err) {
+    if (!CONFIGURED_API_URL) {
+      response = await fetch(`${BACKEND_BASE_URL}/health`);
+      if (!response.ok) throw err;
+    } else {
+      throw err;
     }
   }
 
@@ -50,19 +64,22 @@ export async function fetchHealth(): Promise<SystemHealth> {
 }
 
 /**
- * Retrieves enrolled biometric speaker profiles from backend SQLite store.
+ * Retrieves enrolled biometric speaker profiles from backend.
  */
 export async function fetchSpeakers(): Promise<SpeakerProfile[]> {
+  const url = getApiUrl('/api/speakers');
   let response: Response;
   try {
-    response = await fetch('/api/speakers');
+    response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Proxy /api/speakers returned ${response.status}`);
+      throw new Error(`Fetch speakers returned ${response.status}`);
     }
-  } catch {
-    response = await fetch(`${BACKEND_BASE_URL}/api/speakers`);
-    if (!response.ok) {
-      throw new Error(`Direct /api/speakers returned ${response.status}`);
+  } catch (err) {
+    if (!CONFIGURED_API_URL) {
+      response = await fetch(`${BACKEND_BASE_URL}/api/speakers`);
+      if (!response.ok) throw err;
+    } else {
+      throw err;
     }
   }
 
@@ -114,19 +131,24 @@ export async function loginOperator(
   password: string
 ): Promise<{ access_token: string; user: UserProfile }> {
   const payload = { username, password };
+  const url = getApiUrl('/api/v1/auth/login');
   let res: Response;
   try {
-    res = await fetch('/api/v1/auth/login', {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-  } catch {
-    res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+  } catch (err) {
+    if (!CONFIGURED_API_URL) {
+      res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      throw err;
+    }
   }
 
   if (!res.ok) {
@@ -154,11 +176,16 @@ export async function fetchCurrentUser(token?: string): Promise<UserProfile> {
     Authorization: `Bearer ${authToken}`,
   };
 
+  const url = getApiUrl('/api/v1/auth/me');
   let res: Response;
   try {
-    res = await fetch('/api/v1/auth/me', { headers });
-  } catch {
-    res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/me`, { headers });
+    res = await fetch(url, { headers });
+  } catch (err) {
+    if (!CONFIGURED_API_URL) {
+      res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/me`, { headers });
+    } else {
+      throw err;
+    }
   }
 
   if (!res.ok) {
@@ -173,14 +200,17 @@ export async function fetchCurrentUser(token?: string): Promise<UserProfile> {
  */
 export async function logoutOperator(): Promise<void> {
   removeAuthToken();
+  const url = getApiUrl('/api/v1/auth/logout');
   try {
-    try {
-      await fetch('/api/v1/auth/logout', { method: 'POST' });
-    } catch {
-      await fetch(`${BACKEND_BASE_URL}/api/v1/auth/logout`, { method: 'POST' });
-    }
+    await fetch(url, { method: 'POST' });
   } catch {
-    // Local session was already cleared
+    if (!CONFIGURED_API_URL) {
+      try {
+        await fetch(`${BACKEND_BASE_URL}/api/v1/auth/logout`, { method: 'POST' });
+      } catch {
+        // Local session was already cleared
+      }
+    }
   }
 }
 
